@@ -255,7 +255,7 @@ Concentratord) and restart it:
 
 The logger then stores them in `frames` with `crc = 'BAD_CRC'`, keeps them out of the
 LoRaWAN / other / SF5 counts and the own-device numbers, and the UI shows them separately
-("+N bad" per channel). ChirpStack and the Home Assistant integration receive them too:
+("+N bad" per channel). ChirpStack and the [Home Assistant integration](https://github.com/Majklzbastlirny/ha-chirpstack-gateway-monitor) receive them too:
 ChirpStack cannot use them, and the integration counts them per channel only. So it is best
 turned on for a while to diagnose, then off again.
 
@@ -283,8 +283,14 @@ Code in `app/lorawan_capture`: `capture.py` (MQTT, writer thread, day rotation),
 (schema, retention, summaries), `registry.py` (known gateways and their names), `devices.py`
 (own devices), `explorer.py` (the Devices tab: per-device statistics, MAC commands, packet
 breakdown, CSV), `health.py` (the Health tab, `/healthz`, `/api/health`), `web.py` + `static/index.html` (UI), `phy.py` (LoRaWAN header
-decode, same as the old logger), `chirpstack/` (message decoder copied from the Home
-Assistant integration).
+decode, same as the old logger), `chirpstack/` (message decoder copied from the
+[Home Assistant integration](https://github.com/Majklzbastlirny/ha-chirpstack-gateway-monitor)).
+
+## Related
+
+[ChirpStack Gateway Monitor](https://github.com/Majklzbastlirny/ha-chirpstack-gateway-monitor), a Home
+Assistant integration (HACS) that turns the same gateway traffic into live sensors: gateway online
+state, per-channel counters and airtime, noise floor, non-LoRaWAN top talkers, own-node packet loss.
 
 ## License
 
