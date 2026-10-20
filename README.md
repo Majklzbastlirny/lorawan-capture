@@ -143,7 +143,9 @@ Gateway uptime and state come from the stats report each gateway sends about eve
 What the numbers mean:
 
 - *Sent* comes from the frame counter: a jump from 100 to 103 means 101 and 102 were sent
-  but no gateway heard them (*lost*). Jumps across a time when nothing was being recorded
+  but no gateway heard them (*lost*). The counter goes over the air as 16 bits, so after 65535 comes 0:
+  that counts as the next uplink, not as a reset (a device that sends every 30 s wraps about
+  every 23 days). Jumps across a time when nothing was being recorded
   (no gateway stats report for 5 minutes: logger, broker or gateways down) are not counted
   as lost but shown apart, as sent while nothing was recorded.
 - The payloads are encrypted; what is shown comes from the headers. MAC commands (battery and

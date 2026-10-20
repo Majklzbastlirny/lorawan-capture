@@ -542,7 +542,7 @@ def _summary(dev: str, ups: list[Uplink], own: frozenset[str], gaps: list) -> di
     (reset). Steps across a time nothing was recorded count apart, as unrecorded."""
     sent, unrecorded, per_uplink = 1, 0, []
     for a, b in zip(ups, ups[1:]):
-        step = b.fcnt - a.fcnt
+        step = store.fcnt_step(a.fcnt, b.fcnt)
         if not 0 < step < 1000:
             sent += 1
         elif store.unrecorded(gaps, a.t, b.t):
@@ -612,7 +612,7 @@ NONCE_STEP = 256  # a DevNonce that counts moves on by about the number of attem
 def _nonce_step(nonces: dict, before: int, after: int) -> None:
     """Count one step between two join requests in a row: small and upwards is what a counter does,
     anything else what random numbers do."""
-    nonces["small" if 0 < after - before <= NONCE_STEP else "big"] += 1
+    nonces["small" if 0 < (after - before) % 65536 <= NONCE_STEP else "big"] += 1  # 16 bits: wraps too
 
 
 def _nonce_kind(nonces: dict) -> str | None:
@@ -841,9 +841,9 @@ def device_report(source: Source, dev: str, first: date, last: date, tz: ZoneInf
             for gw, (_, rssi, _snr) in u.gateways.items():
                 if rssi is not None:
                     bucket["rssi"][gw].append(rssi)
-            if (previous is not None and 0 < u.fcnt - previous.fcnt < 1000
-                    and not store.unrecorded(gaps, previous.t, u.t)):
-                bucket["lost"] += u.fcnt - previous.fcnt - 1
+            step = store.fcnt_step(previous.fcnt, u.fcnt) if previous is not None else 0
+            if 0 < step < 1000 and not store.unrecorded(gaps, previous.t, u.t):
+                bucket["lost"] += step - 1
         previous = u
     for bucket in buckets:
         bucket["rssi"] = {gw: round(statistics.median(v), 1) for gw, v in bucket["rssi"].items()}

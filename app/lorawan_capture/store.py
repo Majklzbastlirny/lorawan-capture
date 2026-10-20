@@ -97,7 +97,7 @@ CLASS_SQL = ("CASE WHEN crc IS NOT NULL AND crc != 'CRC_OK' THEN 'bad_crc' "
              "WHEN sf BETWEEN 7 AND 12 AND major = 0 AND mtype IN (%s) THEN 'lorawan' "
              "ELSE 'other' END") % ",".join("'%s'" % m for m in LORAWAN_MTYPES)
 CLASSES = ("lorawan", "other", "sf5", "bad_crc")
-SUMMARY_FORMAT = 7  # bump when summarize() changes, so cached summaries are rebuilt
+SUMMARY_FORMAT = 8  # bump when summarize() changes, so cached summaries are rebuilt
 SILENCE_S = 300  # no gateway stats report for this long: nothing was being recorded
 REPORT_SLACK = 1.5  # reports this many intervals apart: one or more in between were missed
 DOWN_AFTER = 2.5  # a gateway's reports this many intervals apart: two or more missed, it was down
@@ -496,13 +496,23 @@ def unrecorded(gaps: list, a: str, b: str) -> bool:
     return False
 
 
+FCNT_WRAP = 1 << 16  # the frame counter goes over the air as its low 16 bits
+
+
+def fcnt_step(before: int, after: int) -> int:
+    """How far a frame counter moved: 1 for the next uplink, also where the 16 bits sent over the
+    air wrap from 65535 to 0 (every 65536 uplinks: about 25 days at one every 33 s); 0 for the same
+    one again; anything over 999 means a counter that was reset (or a backward step)."""
+    return (after - before) % FCNT_WRAP
+
+
 def count_sent(steps, gaps: list) -> tuple[int, int]:
-    """Uplinks sent, from (frame counter, time) pairs sorted by counter: a step of 1-999 means the
+    """Uplinks sent, from (frame counter, time) pairs in time order: a step of 1-999 means the
     uplinks in between were sent but not heard, any other step a counter reset (one uplink). Steps
     across a silence say nothing about the radio: those uplinks are counted apart, as unrecorded."""
     sent, missed = 1, 0
     for (fa, ta), (fb, tb) in zip(steps, steps[1:]):
-        step = fb - fa
+        step = fcnt_step(fa, fb)
         if 0 < step < 1000 and unrecorded(gaps, ta, tb):
             sent, missed = sent + 1, missed + step - 1
         else:
@@ -516,28 +526,29 @@ def own_stats(conn: sqlite3.Connection, own: frozenset[str]) -> dict:
     if not own:
         return out
     gaps = file_silences(conn)["gaps"]
-    heard: dict[str, dict[int, list]] = defaultdict(dict)
+    # one uplink per transmission (its bytes), not per frame counter: after a reset of the device
+    # or a wrap of the counter, the same numbers come again
+    heard: dict[str, dict[str, list]] = defaultdict(dict)
     marks = ",".join("?" * len(own))
-    for dev, fcnt, gateway_id, freq, ts in conn.execute(
-            f"SELECT dev_addr, fcnt, gateway_id, freq_hz, ts_utc FROM frames WHERE dev_addr IN ({marks}) "
+    for dev, fcnt, gateway_id, freq, ts, key in conn.execute(
+            f"SELECT dev_addr, fcnt, gateway_id, freq_hz, ts_utc, frame_key FROM frames WHERE dev_addr IN ({marks}) "
             f"AND is_downlink = 0 AND (crc = 'CRC_OK' OR crc IS NULL)", tuple(sorted(own))):
-        uplink = heard[dev].setdefault(fcnt, [freq, set(), ts])
+        uplink = heard[dev].setdefault(key, [freq, set(), ts, fcnt])
         uplink[1].add(gateway_id)
         uplink[2] = min(uplink[2], ts)
     for dev, uplinks in heard.items():
-        fcnts = sorted(uplinks)
-        expected, missed = count_sent([(f, uplinks[f][2]) for f in fcnts], gaps)
+        ordered = sorted(uplinks.values(), key=lambda u: u[2])  # in time order: ISO times sort like times
+        expected, missed = count_sent([(u[3], u[2]) for u in ordered], gaps)
         per_gateway: dict[str, int] = defaultdict(int)
         per_channel: dict[int, dict] = {}
-        for fcnt in fcnts:
-            freq, gws, _ = uplinks[fcnt]
+        for freq, gws, _, _ in ordered:
             ch = per_channel.setdefault(freq, {"uplinks": 0, "gateways": defaultdict(int)})
             ch["uplinks"] += 1
             for gateway_id in gws:
                 per_gateway[gateway_id] += 1
                 ch["gateways"][gateway_id] += 1
         out[dev] = {
-            "heard": len(fcnts), "expected": expected, "unrecorded": missed, "gateways": dict(per_gateway),
+            "heard": len(ordered), "expected": expected, "unrecorded": missed, "gateways": dict(per_gateway),
             "channels": {str(f): {"uplinks": c["uplinks"], "gateways": dict(c["gateways"])}
                          for f, c in sorted(per_channel.items())},
         }

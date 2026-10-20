@@ -437,7 +437,7 @@ class Capture:
         elif fcnt == seen["fcnt"]:
             return
         else:
-            step = fcnt - seen["fcnt"]
+            step = store.fcnt_step(seen["fcnt"], fcnt)
             if 0 < step < 1000 and when > seen["t"]:
                 seen["intervals"].append((when - seen["t"]).total_seconds() / step)
             seen["t"], seen["fcnt"] = max(seen["t"], when), fcnt
