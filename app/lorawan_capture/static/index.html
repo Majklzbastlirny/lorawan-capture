@@ -1,0 +1,2052 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LoRaWAN capture</title>
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11, 11, 11, 0.10); --link: #256abf;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+  /* occupancy: one hue, light (little) to dark (much); flipped on the dark page */
+  --q1: #cde2fb; --q2: #9ec5f4; --q3: #6da7ec; --q4: #3987e5; --q5: #256abf; --q6: #184f95; --q7: #0d366b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --link: #6da7ec;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --q1: #0d366b; --q2: #184f95; --q3: #256abf; --q4: #3987e5; --q5: #6da7ec; --q6: #9ec5f4; --q7: #cde2fb;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255, 255, 255, 0.10); --link: #6da7ec;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --q1: #0d366b; --q2: #184f95; --q3: #256abf; --q4: #3987e5; --q5: #6da7ec; --q6: #9ec5f4; --q7: #cde2fb;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1180px; margin: 0 auto; padding: 16px 16px 40px; }
+a { color: var(--link); }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+h2.big { font-size: 18px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 0; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 4px; }
+.meta { flex-basis: 100%; margin: 0; color: var(--ink-2); font-size: 13px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 3px;
+  border-radius: 999px; border: 1px solid var(--ring); background: var(--surface); font-size: 13px; font-weight: 600; }
+.icon { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  color: #fff; font-size: 11px; font-weight: 700; flex: none; }
+.good .icon { background: var(--good); }
+.warning .icon { background: var(--warning); color: #0b0b0b; }
+.critical .icon { background: var(--critical); }
+.tabs { display: flex; gap: 2px; margin: 14px 0 0; border-bottom: 1px solid var(--grid); }
+.tabs a { padding: 6px 14px; color: var(--ink-2); text-decoration: none; font-weight: 600;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs a:hover { color: var(--ink); }
+.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 16px 0 12px; }
+.filters label { color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+select, .btn { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis);
+  border-radius: 6px; padding: 5px 10px; }
+.btn { text-decoration: none; display: inline-block; }
+.btn:hover, select:hover { border-color: var(--muted); }
+.btn[aria-pressed="true"] { border-color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--ink-2); }
+.muted { color: var(--muted); }
+.err { color: var(--critical); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+#content, #ex-body { transition: opacity .15s; }
+#content.loading, #ex-body.loading { opacity: .55; }
+.alert { display: flex; gap: 10px; align-items: center; background: var(--surface); border: 1px solid var(--ring);
+  border-left: 4px solid var(--critical); border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+.tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.tile-label { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.tile-value { font-size: 24px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.tile-sub { color: var(--muted); font-size: 12px; min-height: 1.2em; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px;
+  margin: 12px 0; position: relative; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; margin-bottom: 4px; }
+.card-head h2 { margin: 0; }
+.sub { margin: 0 0 10px; color: var(--ink-2); font-size: 13px; }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 22px; }
+.panel { min-width: 0; }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.panel-title { font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.panel-total { color: var(--ink-2); font-size: 13px; }
+.panel-note { margin: 0 0 2px; color: var(--muted); font-size: 12px; }
+h3 { font-size: 14px; margin: 14px 0 2px; font-weight: 600; }
+h3:first-child { margin-top: 4px; }
+.more { margin: 8px 0 0; }
+svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+.grid { stroke: var(--grid); stroke-width: 1; }
+.axis { stroke: var(--axis); stroke-width: 1; }
+.tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.c-lorawan, .c-heard { fill: var(--s1); background: var(--s1); }
+.c-other, .c-lost { fill: var(--s2); background: var(--s2); }
+.c-sf5 { fill: var(--s3); background: var(--s3); }
+.bar { transition: opacity .12s; }
+.bar.dim { opacity: .35; }
+.hit { fill: transparent; outline: none; }
+.hit:focus-visible { stroke: var(--ink-2); stroke-width: 1; }
+.line { fill: none; stroke: var(--s1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.dot { fill: var(--s1); stroke: var(--surface); stroke-width: 2; }
+.cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.cross, .cross-dot { pointer-events: none; }
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--ring);
+  border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); font-size: 13px; min-width: 150px; }
+.tip-title { color: var(--ink-2); margin-bottom: 4px; }
+.tip-row { display: flex; align-items: center; gap: 8px; }
+.tip-row strong { font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: right; }
+.key { display: inline-block; width: 12px; height: 2px; border-radius: 1px; flex: none; }
+.tip-row .label { color: var(--ink-2); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-2); font-size: 13px; margin: 2px 0 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+details { margin-top: 10px; }
+summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.selected td { background: color-mix(in srgb, var(--s1) 8%, transparent); }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: color-mix(in srgb, var(--s1) 6%, transparent); }
+th .sorter { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; font-weight: 600; }
+th .sorter:hover { color: var(--ink); }
+th[aria-sort="ascending"] .sorter::after { content: " ▲"; font-size: 9px; }
+th[aria-sort="descending"] .sorter::after { content: " ▼"; font-size: 9px; }
+.wrap { white-space: normal; display: inline-block; min-width: 16em; max-width: 44em; }
+.state { display: inline-flex; align-items: center; gap: 5px; }
+.state .icon { width: 15px; height: 15px; font-size: 9px; }
+.info .icon { background: var(--muted); }
+a.pill { color: var(--ink); text-decoration: none; padding-right: 12px; }
+a.pill:hover { border-color: var(--muted); }
+.cell { transition: opacity .12s; }
+.q1 { fill: var(--q1); background: var(--q1); } .q2 { fill: var(--q2); background: var(--q2); }
+.q3 { fill: var(--q3); background: var(--q3); } .q4 { fill: var(--q4); background: var(--q4); }
+.q5 { fill: var(--q5); background: var(--q5); } .q6 { fill: var(--q6); background: var(--q6); }
+.q7 { fill: var(--q7); background: var(--q7); }
+.q0 { fill: none; stroke: var(--grid); stroke-width: 1; }
+.swatch.q0 { background: none; border: 1px solid var(--axis); }
+.heat-label { fill: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.checks td { white-space: normal; vertical-align: top; }
+.checks td:first-child { white-space: nowrap; width: 12em; }
+.subhead { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 14px 0 4px; }
+pre.snippet { white-space: pre; overflow-x: auto; background: var(--page); border: 1px solid var(--grid);
+  border-radius: 6px; padding: 8px 10px; margin: 6px 0 8px; font-size: 12px; }
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--link); cursor: pointer; text-decoration: underline; }
+.foot { color: var(--muted); font-size: 12px; margin-top: 18px; line-height: 1.6; }
+.notice { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; background: var(--surface);
+  border: 1px solid var(--ring); border-left: 4px solid var(--link); border-radius: 8px; padding: 10px 12px; margin: 12px 0 0; }
+.notice .icon { background: var(--ink-2); color: var(--surface); }
+button.btn { cursor: pointer; }
+.rename { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; white-space: normal; }
+.rename input, .toolbar input[type="search"] { font: inherit; color: var(--ink); background: var(--page);
+  border: 1px solid var(--axis); border-radius: 6px; padding: 3px 8px; width: 13em; }
+.toolbar input[type="search"] { width: 18em; padding: 5px 10px; }
+.rename .error { color: var(--critical); }
+.actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 4px 0 6px; }
+.bulk-label { color: var(--ink-2); }
+.bulk-range { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.bulk-range label { color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+input[type="date"] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis);
+  border-radius: 6px; padding: 4px 8px; }
+.btn.disabled { pointer-events: none; opacity: .5; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 10px; }
+.toolbar label { color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+.tag { display: inline-block; border: 1px solid var(--axis); border-radius: 4px; padding: 0 5px; font-size: 11px;
+  font-weight: 600; color: var(--ink-2); line-height: 1.5; }
+.back { display: inline-block; margin: 2px 0 10px; }
+.devhead { margin: 4px 0 2px; }
+.bytes { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
+.field { border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; background: var(--page); min-width: 0; max-width: 100%; }
+.field .hex { overflow-wrap: anywhere; }
+.field .fname { font-size: 11px; color: var(--ink-2); }
+.rawhex { overflow-wrap: anywhere; user-select: all; background: var(--page); border: 1px solid var(--grid);
+  border-radius: 6px; padding: 8px 10px; margin: 4px 0 8px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 6px 0 4px; font-size: 13px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .tile-value { font-size: 20px; }
+  .toolbar input[type="search"] { width: 100%; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>LoRaWAN capture</h1>
+    <span id="pill" class="pill"><span class="icon">…</span>Loading</span>
+    <a id="health-pill" class="pill" href="#health" hidden></a>
+    <p id="meta" class="meta"></p>
+  </header>
+  <nav class="tabs" aria-label="Views">
+    <a id="tab-overview" href="#overview" aria-current="page">Overview</a>
+    <a id="tab-devices" href="#devices">Devices</a>
+    <a id="tab-health" href="#health">Health</a>
+  </nav>
+  <div id="newgw" class="notice" hidden></div>
+
+  <div id="view-overview">
+    <div class="filters">
+      <label>Day <select id="day"></select></label>
+      <a id="dl-db" class="btn" href="#">Download .db</a>
+      <a id="dl-gz" class="btn" href="#">Download .db.gz</a>
+      <span id="dl-note" class="muted"></span>
+    </div>
+
+    <div id="content">
+      <div id="alert" class="alert" hidden></div>
+      <section id="tiles" class="tiles" aria-label="Totals for the selected day"></section>
+
+      <section id="charts" class="card">
+        <h2>Packets per hour</h2>
+        <p class="sub">Each class on its own scale (a flood would otherwise flatten the rest). Local time.</p>
+        <div id="panels" class="panels"></div>
+        <div id="tip" class="tip" hidden></div>
+        <details>
+          <summary>Show the numbers</summary>
+          <div class="tablewrap"><table id="hours-table"></table></div>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>Gateways</h2>
+        <div class="tablewrap"><table id="gw-table"></table></div>
+      </section>
+
+      <section class="card">
+        <h2>Gateway reports</h2>
+        <p class="sub">From the gateways' own stats messages. Bad CRC: received but not decodable.
+          Stored: share of the good packets a gateway reported that reached this logger (counted between
+          reports that both arrived, so a restart does not skew it).</p>
+        <div class="tablewrap"><table id="rep-table"></table></div>
+      </section>
+
+      <section id="own-card" class="card">
+        <div class="card-head">
+          <h2>Own devices</h2>
+          <button class="btn" type="button" id="own-add">Add device</button>
+        </div>
+        <p class="sub">Share of each device's uplinks (counted from its frame counter, leaving out times nothing
+          was recorded) that reached each gateway.
+          Devices are known by their DevAddr, the only identity the gateways see; a device that joins again (OTAA)
+          gets a new one, so add that then. Names and the list are kept in <span class="mono">devices.json</span>.</p>
+        <div id="own-form" class="toolbar" hidden></div>
+        <p id="own-empty" class="muted" hidden>No own devices yet: add one with its DevAddr (e.g. from ChirpStack,
+          or from the Devices tab).</p>
+        <div class="tablewrap"><table id="own-table"></table></div>
+      </section>
+
+      <section class="card">
+        <h2>Channels</h2>
+        <p class="sub">Packets per frequency and gateway.</p>
+        <div class="tablewrap"><table id="ch-table"></table></div>
+      </section>
+
+      <section id="occ-card" class="card">
+        <div class="card-head">
+          <h2>Channel occupancy</h2>
+          <span id="occ-gws" class="actions" aria-label="Gateway"></span>
+        </div>
+        <p class="sub">How much of each hour a channel was on air, as one gateway heard it: the airtime of the packets it
+          decoded, worked out from their length, spreading factor and bandwidth (an estimate: other systems may use longer
+          preambles). Signals a gateway cannot decode, like the RFID reader, do not show here. Local time.</p>
+        <div id="occ-legend" class="legend"></div>
+        <svg id="occ-chart" class="chart" role="img"></svg>
+        <div id="occ-tip" class="tip" hidden></div>
+        <details>
+          <summary>Show the numbers (% of each hour)</summary>
+          <div class="tablewrap"><table id="occ-table"></table></div>
+        </details>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Daily files</h2>
+      <p class="sub">One SQLite file per local day, same tables as the old logger plus <span class="mono">conn</span>
+        and the gateway stats details. Today's file downloads as a snapshot up to now.</p>
+      <div class="bulk">
+        <span class="bulk-label">Several days as one .zip</span>
+        <a class="btn" id="bulk-7" href="#">Last 7 days</a>
+        <a class="btn" id="bulk-30" href="#">Last 30 days</a>
+        <a class="btn" id="bulk-all" href="#">Everything</a>
+        <span class="bulk-range">
+          <label>From <input type="date" id="bulk-from"></label>
+          <label>to <input type="date" id="bulk-to"></label>
+          <a class="btn" id="bulk-range" href="#">Download</a>
+        </span>
+      </div>
+      <p class="sub">Sizes are before compression; the .zip is usually 3–4 times smaller. It also holds
+        <span class="mono">gateways.json</span> and <span class="mono">devices.json</span> with the names and a README
+        on how to read the data (<a href="/download/README.md" target="_blank" rel="noopener">read it here</a>).</p>
+      <div class="tablewrap"><table id="files"></table></div>
+    </section>
+  </div>
+
+  <div id="view-explorer" hidden>
+    <div class="filters" id="ex-range">
+      <span class="bulk-label">Range</span>
+      <button class="btn" type="button" data-days="1">Today</button>
+      <button class="btn" type="button" data-days="7">Last 7 days</button>
+      <button class="btn" type="button" data-days="30">Last 30 days</button>
+      <button class="btn" type="button" data-days="all">Everything</button>
+      <span class="bulk-range">
+        <label>From <input type="date" id="ex-from"></label>
+        <label>to <input type="date" id="ex-to"></label>
+      </span>
+      <button class="btn" type="button" id="ex-reload">Reload</button>
+      <span id="ex-note" class="muted"></span>
+    </div>
+    <div id="ex-body"></div>
+  </div>
+
+  <div id="view-health" hidden>
+    <section class="card">
+      <div class="card-head"><h2>Right now</h2><span id="health-checked" class="muted"></span></div>
+      <p class="sub">A problem means the capture itself is not recording properly; then <span class="mono">/healthz</span>
+        fails too. Warnings are worth a look but do not stop the recording.</p>
+      <div id="health-now"><p class="muted">Loading…</p></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Recent days</h2><button class="btn" type="button" id="health-reload">Reload</button></div>
+      <p class="sub">Per day: when the first and last packet came, the times nothing was recorded (no gateway report for over
+        5 minutes), how much of what each gateway reported reached the logger, and the own devices' uplinks heard of those
+        sent. <span id="health-days-note" class="muted"></span></p>
+      <div class="tablewrap"><table id="health-days"></table></div>
+    </section>
+    <section class="card">
+      <h2>Alerts on your phone</h2>
+      <p class="sub"><span class="mono">/healthz</span> answers 503 while there is a problem: Unraid's Docker tab then shows
+        the container as unhealthy (after about 3 minutes), and an HTTP monitor in Uptime Kuma or similar can notify you.
+        <span class="mono">/api/health</span> has everything on this page as JSON, for example for a Home Assistant REST sensor
+        (configuration.yaml; add <span class="mono">username</span> and <span class="mono">password</span> if you set a login):</p>
+      <pre id="health-snippet" class="snippet mono"></pre>
+    </section>
+  </div>
+
+  <footer id="foot" class="foot"></footer>
+</main>
+
+<script>
+"use strict";
+const CLASSES = [
+  { key: "lorawan", label: "LoRaWAN", note: "LoRaWAN frames at SF7–SF12" },
+  { key: "other", label: "Other", note: "non-LoRaWAN frames, SF6, odd headers" },
+  { key: "sf5", label: "SF5", note: "anything at SF5 (the 2026 flood)" },
+];
+const SVGNS = "http://www.w3.org/2000/svg";
+const CODE_RATES = { 1: "4/5", 2: "4/6", 3: "4/7", 4: "4/8" };
+const state = { status: null, days: [], day: null, summary: null, editing: null, ownEdit: null };
+const $ = (id) => document.getElementById(id);
+const nf = new Intl.NumberFormat("en-US");
+const fmt = (n) => (n == null ? "–" : nf.format(n));
+const pad = (n) => String(n).padStart(2, "0");
+const pct = (part, whole) => (100 * part / whole).toFixed(1) + " %";
+
+function compact(n) {
+  if (n == null) return "–";
+  if (n < 10000) return nf.format(n);
+  if (n < 1e6) return (n / 1e3).toFixed(n < 1e5 ? 1 : 0).replace(/\.0$/, "") + "K";
+  return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+}
+function bytes(n) {
+  if (n == null) return "–";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + units[i];
+}
+function ago(sec) {
+  if (sec == null) return "never";
+  if (sec < 90) return Math.max(0, Math.floor(sec)) + " s ago";
+  if (sec < 5400) return Math.round(sec / 60) + " min ago";
+  if (sec < 172800) return Math.round(sec / 3600) + " h ago";
+  return Math.round(sec / 86400) + " days ago";
+}
+function clock(iso) {
+  return iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "–";
+}
+function when(iso) {  // the time if it is today, else date and time
+  if (!iso) return "–";
+  const t = new Date(iso);
+  return t.toDateString() === new Date().toDateString() ? clock(iso)
+    : t.toLocaleString([], { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function stamp(iso) {  // to the millisecond, for receptions
+  const t = new Date(iso);
+  return t.toLocaleDateString([], { day: "numeric", month: "numeric" }) + " " + clock(iso) + "." +
+    String(t.getMilliseconds()).padStart(3, "0");
+}
+function dur(sec) {
+  if (sec == null) return "–";
+  if (sec < 120) return Math.round(sec) + " s";
+  if (sec < 7200) return Math.round(sec / 60) + " min";
+  if (sec < 172800) return (sec / 3600).toFixed(sec < 36000 ? 1 : 0).replace(/\.0$/, "") + " h";
+  return (sec / 86400).toFixed(1).replace(/\.0$/, "") + " days";
+}
+function pctOf(part, whole) {
+  if (!whole) return "–";
+  const p = (100 * part) / whole;
+  return (p === 0 || p >= 10 ? Math.round(p) : p >= 1 ? p.toFixed(1) : p.toFixed(2)) + " %";
+}
+const mhz = (hz) => (hz ? (hz / 1e6).toFixed(3) : "–");
+const dbm = (v) => (v == null ? "–" : Math.round(v) + " dBm");
+const spaced = (hex) => hex.replace(/(..)(?!$)/g, "$1 ");
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "text") e.textContent = v;
+    else if (v !== undefined && v !== null) e.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid !== null && kid !== undefined && kid !== false) e.append(kid);
+  return e;
+}
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+function statusBadge(kind, text) {
+  const icon = { good: "✓", warning: "!", critical: "✕", info: "i" }[kind] || "?";
+  return el("span", { class: "state " + kind }, el("span", { class: "icon", "aria-hidden": "true", text: icon }), text);
+}
+function csvCell(value, excel) {
+  if (value == null) return "";
+  const text = typeof value === "number" && excel ? String(value).replace(".", ",") : String(value);
+  return /[";,\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+const excelLocale = (1.5).toLocaleString().includes(",");  // Excel here wants ";" and decimal commas
+function downloadCsv(filename, header, rows) {
+  const text = (excelLocale ? "\ufeff" : "") + [header, ...rows].map((r) => r.map((v) => csvCell(v, excelLocale))
+    .join(excelLocale ? ";" : ",")).join("\r\n") + "\r\n";
+  const a = el("a", { href: URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" })), download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function registry() { return (state.status && state.status.registry) || {}; }
+function gwName(gid) { return (registry()[gid] || {}).name || null; }
+function gwShort(gid) { return gwName(gid) || gid.slice(-6); }
+function gwCell(gid) {
+  const name = gwName(gid);
+  return name ? el("span", {}, name + " ", el("span", { class: "mono muted", text: gid }))
+              : el("span", { class: "mono", text: gid });
+}
+function ownDevices() { return (state.status && state.status.devices) || {}; }
+function devName(addr) { return (ownDevices()[addr] || {}).name || null; }
+function isOwn(addr) { return Object.prototype.hasOwnProperty.call(ownDevices(), addr); }
+function devLabel(addr) {
+  const name = devName(addr);
+  return name ? el("span", {}, name + " ", el("span", { class: "mono muted", text: addr }))
+              : el("span", { class: "mono", text: addr });
+}
+function fillTable(table, head, rows, numeric) {
+  table.replaceChildren();
+  const tr = el("tr");
+  head.forEach((h, i) => tr.append(el("th", { scope: "col", class: numeric.has(i) ? "num" : null, text: h })));
+  table.append(el("thead", {}, tr));
+  const body = el("tbody");
+  for (const row of rows) {
+    const r = el("tr", { class: row.className || null, "data-id": row.id || null });
+    row.cells.forEach((c, i) => r.append(el("td", { class: numeric.has(i) ? "num" : null }, c instanceof Node ? c : String(c))));
+    body.append(r);
+  }
+  table.append(body);
+}
+function details(label, table) {
+  return el("details", {}, el("summary", { text: label }), el("div", { class: "tablewrap" }, table));
+}
+
+// ---------------------------------------------------------------- status
+let statusAt = 0;  // performance.now() when state.status arrived
+function messageAge() {  // counted on locally between polls, so it moves every second
+  const s = state.status;
+  return s && s.last_message_age != null ? s.last_message_age + (performance.now() - statusAt) / 1000 : null;
+}
+function renderPill() {
+  const s = state.status, age = messageAge();
+  const pill = $("pill");
+  let kind = "good", text = "Capturing";
+  if (!s) { kind = "critical"; text = "Cannot reach the server"; }
+  else if (!s.writer_alive) { kind = "critical"; text = "Writer stopped"; }
+  else if (!s.mqtt.connected) { kind = "critical"; text = "Broker disconnected"; }
+  else if (age == null || age > 120) { kind = "warning"; text = "Connected, no messages"; }
+  if (pill.dataset.key === kind + text) return;
+  pill.dataset.key = kind + text;
+  pill.className = "pill " + kind;
+  pill.replaceChildren(el("span", { class: "icon", "aria-hidden": "true",
+    text: kind === "good" ? "✓" : kind === "warning" ? "!" : "✕" }), text);
+}
+function renderHealthPill() {
+  const h = state.status && state.status.health, pill = $("health-pill");
+  const problems = h ? h.problems.length : 0, warnings = h ? h.warnings.length : 0;
+  pill.hidden = !problems && !warnings;
+  if (pill.hidden) { pill.dataset.key = ""; return; }
+  pill.title = [...h.problems, ...h.warnings].join("\n");
+  const key = problems + "/" + warnings;
+  if (pill.dataset.key === key) return;  // unchanged: no rebuild every 5 s
+  pill.dataset.key = key;
+  pill.className = "pill " + (problems ? "critical" : "warning");
+  const plural = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+  pill.replaceChildren(el("span", { class: "icon", "aria-hidden": "true", text: problems ? "✕" : "!" }),
+    [problems && plural(problems, "problem"), warnings && plural(warnings, "warning")].filter(Boolean).join(", "));
+}
+function tick() {
+  renderPill();
+  const age = $("age");
+  if (age) age.textContent = ago(messageAge());
+}
+function renderStatus() {
+  const s = state.status;
+  renderPill();
+  if (!s) return;
+  renderNewGateways();
+  renderHealthPill();
+  const bits = [
+    "broker " + s.mqtt.broker,
+    el("span", {}, "last message ", el("span", { id: "age", text: ago(messageAge()) })),
+    "writing " + s.db + " (" + bytes(s.db_size) + ", " + fmt(s.rows_today) + " packets)",
+    "disk " + bytes(s.disk.free) + " free of " + bytes(s.disk.total),
+  ];
+  if (s.mqtt.error) bits.push("broker error: " + s.mqtt.error);
+  if (s.counters.dropped) bits.push(fmt(s.counters.dropped) + " messages dropped");
+  $("meta").replaceChildren(...bits.flatMap((bit, i) => (i ? ["  ·  ", bit] : [bit])));
+
+  const foot = $("foot");
+  foot.replaceChildren();
+  const subs = Object.entries(s.mqtt.subscriptions);
+  foot.append(el("div", { text: "lorawan-capture " + s.version + " · TZ " + s.config.tz + " · " +
+    (s.config.keep_days ? "keeps " + s.config.keep_days + " days" : "keeps every day") +
+    " · started " + new Date(s.started).toLocaleString() }));
+  foot.append(el("div", { text: "topics: " + (subs.length ? subs.map(([t, r]) => t + " (" + r + ")").join(", ")
+                                                          : s.config.topics.join(", ") + " (not subscribed yet)") }));
+  const c = s.counters;
+  foot.append(el("div", { text: "since start: " + fmt(c.up || 0) + " uplinks, " + fmt(c.stats || 0) + " stats, " +
+    fmt(c.conn || 0) + " state messages, " + fmt(c.errors || 0) + " errors" + (s.last_error ? " (last: " + s.last_error + ")" : "") }));
+}
+
+// ------------------------------------------------------------ day picker
+function renderDays() {
+  const sel = $("day");
+  sel.replaceChildren(...state.days.map((d) => el("option", { value: d.day, text: d.today ? d.day + " (today)" : d.day })));
+  if (!state.days.some((d) => d.day === state.day)) state.day = state.days.length ? state.days[0].day : null;
+  if (state.day) sel.value = state.day;
+  $("tab-overview").href = "#" + (state.day || "overview");
+  updateDownloads();
+
+  const rows = state.days.map((d) => {
+    const b = d.brief || {};
+    const view = el("button", { class: "linkish", type: "button", text: d.today ? d.day + " (today)" : d.day });
+    view.addEventListener("click", () => selectDay(d.day));
+    const own = b.own ? Object.entries(b.own).map(([dev, o]) => dev + " " + o.heard + "/" + o.expected).join(", ") : "";
+    const links = el("span", {},
+      el("a", { href: "/download/" + d.file, text: ".db" }), " · ",
+      el("a", { href: "/download/" + d.file + ".gz", text: ".db.gz" }));
+    return { className: d.day === state.day ? "selected" : null,
+      cells: [view, bytes(d.size), d.error ? el("span", { class: "err", title: d.error, text: "cannot be read" }) : fmt(b.rows),
+              fmt(b.lorawan), fmt(b.other), fmt(b.sf5), own || "–", links] };
+  });
+  fillTable($("files"), ["Day", "Size", "Packets", "LoRaWAN", "Other", "SF5", "Own (heard/sent)", "Download"],
+            rows, new Set([1, 2, 3, 4, 5]));
+  renderBulk();
+}
+function dayShift(day, n) {  // YYYY-MM-DD plus n days, counted in UTC so DST cannot shift it
+  const d = new Date(day + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function rangeLink(a, from, to, label) {
+  const files = state.days.filter((d) => d.day >= from && d.day <= to);
+  const size = files.reduce((sum, d) => sum + d.size, 0);
+  a.href = "/download/range.zip?from=" + from + "&to=" + to;
+  a.textContent = label + " · " + (files.length ? files.length + (files.length === 1 ? " day, " : " days, ") + bytes(size)
+                                                : "no files");
+  a.classList.toggle("disabled", !files.length);
+  a.toggleAttribute("aria-disabled", !files.length);
+}
+function renderBulk() {
+  if (!state.days.length) return;
+  const today = (state.days.find((d) => d.today) || state.days[0]).day;
+  const first = state.days[state.days.length - 1].day;
+  rangeLink($("bulk-7"), dayShift(today, -6), today, "Last 7 days");
+  rangeLink($("bulk-30"), dayShift(today, -29), today, "Last 30 days");
+  rangeLink($("bulk-all"), first, today, "Everything");
+  const from = $("bulk-from"), to = $("bulk-to");
+  for (const input of [from, to]) { input.min = first; input.max = today; }
+  if (!from.value) from.value = dayShift(today, -6) < first ? first : dayShift(today, -6);
+  if (!to.value) to.value = today;
+  const [a, b] = from.value <= to.value ? [from.value, to.value] : [to.value, from.value];
+  rangeLink($("bulk-range"), a, b, "Download");
+}
+function updateDownloads() {
+  const d = state.days.find((x) => x.day === state.day);
+  for (const [id, suffix] of [["dl-db", ""], ["dl-gz", ".gz"]]) {
+    const a = $(id);
+    a.href = d ? "/download/" + d.file + suffix : "#";
+    a.toggleAttribute("aria-disabled", !d);
+  }
+  $("dl-note").textContent = d ? (d.today ? "snapshot of today so far, " : "") + bytes(d.size) : "";
+}
+function selectDay(day) {
+  state.day = day;
+  $("day").value = day;
+  history.replaceState(null, "", "#" + day);
+  renderDays();
+  refreshDay();
+}
+
+// ------------------------------------------------------------- the day
+function renderDay() {
+  const s = state.summary;
+  if (!s) return;
+  renderAlert(s);
+  renderTiles(s);
+  renderCharts(s);
+  renderGateways(s);
+  renderReports(s);
+  renderOwn(s);
+  renderChannels(s);
+  renderOccupancy(s);
+}
+function renderAlert(s) {  // a channel busy with packets that are not LoRaWAN: a flood, whatever its SF
+  const box = $("alert");
+  const today = state.days.some((d) => d.day === s.day && d.today);
+  const hour = new Date().getHours();
+  let worst = null;
+  for (const [gid, perFreq] of Object.entries(s.occupancy || {})) {
+    for (const [freq, hours] of Object.entries(perFreq)) {
+      for (const [h, , other, sf5] of hours) {
+        if (today && (h < hour - 1 || h > hour)) continue;  // today: the last hour and this one
+        const span = occSpan(s, h);
+        const share = span >= 600 ? (other + sf5) / span : 0;
+        if (share >= 0.05 && (!worst || share > worst.share)) worst = { gid, freq: +freq, h, share };
+      }
+    }
+  }
+  const where = worst ? " (" + pad(worst.h) + ":00, heard at " + (gwName(worst.gid) || worst.gid) + ")" : "";
+  const text = !worst ? null : today
+    ? mhz(worst.freq) + " MHz is busy: " + Math.round(100 * worst.share) + " % of an hour on air with packets that are not " +
+      "LoRaWAN" + where + ". Something new may be transmitting; see Channel occupancy below."
+    : "On this day " + mhz(worst.freq) + " MHz was up to " + Math.round(100 * worst.share) + " % busy with packets that are " +
+      "not LoRaWAN" + where + ".";
+  box.hidden = !text;
+  box.className = "alert critical";
+  if (text) box.replaceChildren(el("span", { class: "icon", "aria-hidden": "true", text: "!" }), text);
+}
+function renderTiles(s) {
+  const host = $("tiles");
+  host.replaceChildren();
+  const add = (label, value, sub, cls) => {
+    const lab = el("div", { class: "tile-label" });
+    if (cls) lab.append(el("span", { class: "swatch c-" + cls, "aria-hidden": "true" }));
+    lab.append(label);
+    host.append(el("div", { class: "tile" }, lab, el("div", { class: "tile-value", text: value }),
+                   el("div", { class: "tile-sub", text: sub || "" })));
+  };
+  const share = (n) => (s.rows ? Math.round((100 * n) / s.rows) + " % of received" : "");
+  add("Packets received", compact(s.rows), "by all gateways together");
+  add("Unique packets", compact(s.unique), s.unique ? (s.rows / s.unique).toFixed(2) + " receptions each" : "");
+  for (const c of CLASSES) add(c.label, compact(s.totals[c.key]), share(s.totals[c.key]), c.key);
+  if (s.totals.bad_crc) add("Bad CRC", compact(s.totals.bad_crc), "forwarded by the gateway, not counted above");
+  add("Gateways", String(Object.keys(s.gateways).length), "sent packets or stats");
+}
+
+function niceTicks(max) {
+  if (max <= 0) return [0, 1];
+  const raw = max / 3;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = Math.max(1, [1, 2, 2.5, 5, 10].map((m) => m * pow).find((x) => x >= raw));
+  const ticks = [];
+  for (let v = 0; v < max + step; v += step) { ticks.push(v); if (v >= max) break; }
+  return ticks;
+}
+function barPath(x, y, w, h, r) {
+  const base = y + h;
+  r = Math.min(r, w / 2, h);
+  return `M${x},${base}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${base}Z`;
+}
+function renderCharts(s) {
+  const host = $("panels");
+  if (!host.childElementCount) {
+    for (const c of CLASSES) {
+      const head = el("div", { class: "panel-head" },
+        el("span", { class: "panel-title" }, el("span", { class: "swatch c-" + c.key, "aria-hidden": "true" }), c.label),
+        el("span", { class: "panel-total" }));
+      const svg = svgEl("svg", { class: "chart", role: "img" });
+      host.append(el("div", { class: "panel", "data-key": c.key }, head, el("p", { class: "panel-note", text: c.note }), svg));
+    }
+  }
+  for (const c of CLASSES) {
+    const panel = host.querySelector(`[data-key="${c.key}"]`);
+    panel.querySelector(".panel-total").textContent = fmt(s.totals[c.key]) + " packets";
+    drawPanel(panel.querySelector("svg"), c, s.hours);
+  }
+  const bad = s.totals.bad_crc > 0;
+  fillTable($("hours-table"), ["Hour", ...CLASSES.map((c) => c.label), ...(bad ? ["Bad CRC"] : [])],
+    s.hours.map((h, i) => ({ cells: [pad(i) + ":00", ...CLASSES.map((c) => fmt(h[c.key])), ...(bad ? [fmt(h.bad_crc)] : [])] })),
+    new Set([1, 2, 3, 4]));
+}
+function drawPanel(svg, c, hours) {
+  const W = Math.max(220, Math.floor(svg.parentElement.clientWidth)), H = 168;
+  const m = { l: 44, r: 6, t: 10, b: 24 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.setAttribute("aria-label", c.label + " packets per hour, see the table below the charts");
+  svg.replaceChildren();
+  const values = hours.map((h) => h[c.key] || 0);
+  const ticks = niceTicks(Math.max(0, ...values));
+  const top = ticks[ticks.length - 1];
+  const y = (v) => m.t + ph - (v / top) * ph;
+  for (const t of ticks) {
+    svg.append(svgEl("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), class: t === 0 ? "axis" : "grid" }));
+    const label = svgEl("text", { x: m.l - 6, y: y(t) + 4, class: "tick", "text-anchor": "end" });
+    label.textContent = compact(t);
+    svg.append(label);
+  }
+  const band = pw / 24, bw = Math.min(24, Math.max(2, band * 0.62));
+  values.forEach((v, i) => {
+    if (v > 0) {
+      const h = Math.max(1.5, (v / top) * ph);
+      svg.append(svgEl("path", { d: barPath(m.l + i * band + (band - bw) / 2, m.t + ph - h, bw, h, 4),
+                                 class: "bar c-" + c.key, "data-hour": i }));
+    }
+    svg.append(svgEl("rect", { x: m.l + i * band, y: m.t, width: band, height: ph + m.b - 6, class: "hit",
+                               tabindex: 0, "data-hour": i, "aria-label": pad(i) + ":00, " + c.label + " " + fmt(v) }));
+  });
+  for (let i = 0; i < 24; i += 3) {
+    const t = svgEl("text", { x: m.l + i * band + band / 2, y: H - 6, class: "tick", "text-anchor": "middle" });
+    t.textContent = pad(i);
+    svg.append(t);
+  }
+}
+function showTip(hour, target) {
+  const s = state.summary;
+  if (!s) return;
+  const tip = $("tip");
+  tip.replaceChildren(el("div", { class: "tip-title", text: pad(hour) + ":00–" + pad((hour + 1) % 24) + ":00" }));
+  for (const c of CLASSES) {
+    tip.append(el("div", { class: "tip-row" }, el("span", { class: "key c-" + c.key, "aria-hidden": "true" }),
+      el("strong", { text: fmt(s.hours[hour][c.key]) }), el("span", { class: "label", text: c.label })));
+  }
+  tip.hidden = false;
+  const card = $("charts").getBoundingClientRect(), r = target.getBoundingClientRect();
+  let left = r.right - card.left + 6;
+  if (left + tip.offsetWidth > card.width - 8) left = r.left - card.left - tip.offsetWidth - 6;
+  tip.style.left = Math.max(8, left) + "px";
+  tip.style.top = Math.max(8, r.top - card.top) + "px";
+  document.querySelectorAll("#panels .bar").forEach((b) => b.classList.toggle("dim", +b.dataset.hour !== hour));
+}
+function hideTip() {
+  $("tip").hidden = true;
+  document.querySelectorAll("#panels .bar.dim").forEach((b) => b.classList.remove("dim"));
+}
+
+function renderGateways(s) {
+  if (state.editing) return;  // a refresh must not wipe an open name editor
+  const reg = registry();
+  // every gateway ever seen, also those silent on this day
+  const ids = [...new Set([...Object.keys(s.gateways), ...Object.keys(reg)])];
+  const frames = (gid) => (s.gateways[gid] ? s.gateways[gid].frames : -1);
+  ids.sort((a, b) => frames(b) - frames(a) || a.localeCompare(b));
+  const live = state.status && state.status.day === s.day ? state.status.gateways : {};
+  const today = state.days.some((d) => d.day === s.day && d.today);
+  const localDay = (t) => t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate());
+  const at = (iso) => {  // time on the selected day, date and time otherwise
+    const t = new Date(iso);
+    return localDay(t) === s.day ? clock(iso)
+      : t.toLocaleString([], { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  const rows = ids.map((gid) => {
+    const g = s.gateways[gid];
+    // silent today: when it was last heard at all (uplinks or stats, from the registry)
+    const lastHeard = g && g.last ? clock(g.last) : today && (reg[gid] || {}).last_seen ? at(reg[gid].last_seen) : "–";
+    // today: the state it reports now; a past day: whether it was still sending reports when the day ended
+    let online = live[gid] ? live[gid].online : null;
+    if (online == null && !today && g && g.uptime) online = g.uptime.up_at_end;
+    let st = online === true ? statusBadge("good", "online") : online === false ? statusBadge("critical", "offline") : "–";
+    if (st !== "–" && !today) st.title = "at the end of the day, from its stats reports";
+    const rename = el("button", { class: "linkish", type: "button", text: gwName(gid) ? "Rename" : "Name it" });
+    rename.addEventListener("click", () => startRename(gid));
+    const n = (key) => (g ? fmt(g[key]) : "–");
+    return { id: gid, cells: [gwCell(gid), n("frames"), n("lorawan"), n("other"), n("sf5"),
+                              g && g.first ? clock(g.first) : "–", lastHeard, uptimeCell(g), st, rename] };
+  });
+  fillTable($("gw-table"), ["Gateway", "Packets", "LoRaWAN", "Other", "SF5", "First packet", "Last heard", "Uptime", "State", ""],
+            rows, new Set([1, 2, 3, 4]));
+}
+function upText(pct) {
+  return (pct >= 100 ? "100" : pct >= 99 ? pct.toFixed(2) : pct.toFixed(1)) + " %";
+}
+function uptimeCell(g) {  // the share of the recorded time the gateway was sending its stats reports
+  const u = g && g.uptime;
+  if (!u || u.pct == null) return "–";
+  const off = g.conn.filter((c) => c[1] === "OFFLINE").length;
+  const notes = [u.down_s ? dur(u.down_s) + " down" : "", off ? off + (off === 1 ? " disconnect" : " disconnects") : ""].filter(Boolean);
+  const tip = ["Sending its stats reports (every " + Math.round(u.interval_s) + " s) " + upText(u.pct) + " of the recorded time" +
+               (u.down_s ? ", none for " + dur(u.down_s) : "") + "."];
+  if (u.outages.length) tip.push("No reports: " + u.outages.slice(0, 8).map(([a, b]) => clock(a) + "–" + clock(b)).join(", ") +
+                                 (u.outages.length > 8 ? " and " + (u.outages.length - 8) + " more" : ""));
+  if (off) tip.push(off + (off === 1 ? " disconnect" : " disconnects") + " from the broker: " + clock(g.conn.find((c) => c[1] === "OFFLINE")[0]) +
+                    (off > 1 ? " to " + clock(g.conn.filter((c) => c[1] === "OFFLINE").pop()[0]) : ""));
+  tip.push("Times when no gateway at all was heard (the capture, the broker or every gateway down) are left out.");
+  return el("span", { title: tip.join("\n") }, upText(u.pct), notes.length ? el("span", { class: "muted", text: " · " + notes.join(", ") }) : null);
+}
+function renderReports(s) {
+  const ids = Object.keys(s.gateways).filter((gid) => s.gateways[gid].stats)
+    .sort((a, b) => s.gateways[b].frames - s.gateways[a].frames);
+  const rows = ids.map((gid) => {
+    const g = s.gateways[gid], st = g.stats, rep = g.reports || {}, info = rep.info || {};
+    const bad = st.rx - st.rx_ok;
+    const problems = Object.entries(rep.tx_status || {}).filter(([k]) => k !== "OK").map(([k, n]) => k + " " + fmt(n));
+    const duty = Object.entries(rep.duty_peak || {}).sort((a, b) => b[1] - a[1])[0];
+    const offset = info.clock_offset_s;
+    // what the gateway software puts in its metadata (Concentratord: model, versions, temperature)
+    const meta = info.metadata || {};
+    const hal = meta.hal_version ? String(meta.hal_version).replace(/^Version:\s*/i, "").replace(/;\s*$/, "") : null;
+    const config = info.config_version || meta.config_version;
+    const software = [meta.concentratord_version && "Concentratord " + meta.concentratord_version,
+                      meta.mqtt_forwarder_version && "MQTT forwarder " + meta.mqtt_forwarder_version,
+                      hal && "HAL " + hal, config && "config " + String(config).slice(0, 8)].filter(Boolean).join(", ");
+    const temp = parseFloat(meta.concentrator_temp), hot = rep.temp ? rep.temp.max : null;
+    const tempText = isNaN(temp) ? "–" : temp.toFixed(1) + " °C" + (hot != null && hot > temp + 0.5 ? " (max " + hot.toFixed(1) + ")" : "");
+    return { cells: [gwCell(gid), fmt(st.reports), fmt(st.rx), st.rx ? fmt(bad) + " (" + pct(bad, st.rx) + ")" : "–",
+      g.check && g.check.reported ? pct(g.check.stored, g.check.reported) : "–",
+      fmt(st.tx_emitted) + " / " + fmt(st.tx), problems.length ? problems.join(", ") : (st.tx ? "none" : "–"),
+      duty ? duty[0] + " " + duty[1].toFixed(1) + " %" : "–",
+      offset == null ? "–" : (offset > 0 ? "+" : "") + offset.toFixed(1) + " s",
+      meta.model || "–", software || "–", tempText] };
+  });
+  if (!rows.length) rows.push({ cells: ["no stats messages on this day", ...Array(11).fill("")] });
+  fillTable($("rep-table"), ["Gateway", "Reports", "Received", "Bad CRC", "Stored", "Downlinks sent / asked",
+                             "Downlink problems", "Duty cycle peak", "Clock", "Model", "Software", "Temp."],
+            rows, new Set([1, 2, 3, 4, 8, 11]));
+}
+function startRename(gid) {
+  const row = [...$("gw-table").querySelectorAll("tr[data-id]")].find((r) => r.dataset.id === gid);
+  if (!row) return;
+  state.editing = gid;
+  const input = el("input", { type: "text", maxlength: "40", value: gwName(gid) || "", placeholder: "name",
+                              "aria-label": "Name for gateway " + gid });
+  const save = el("button", { class: "btn", type: "button", text: "Save" });
+  const cancel = el("button", { class: "linkish", type: "button", text: "Cancel" });
+  const error = el("span", { class: "error", role: "status" });
+  row.cells[0].replaceChildren(el("span", { class: "rename" }, input, save, cancel,
+                                  el("span", { class: "mono muted", text: gid }), error));
+  input.focus();
+  input.select();
+  const done = () => { state.editing = null; if (state.summary) renderDay(); };
+  const submit = async () => {
+    save.disabled = true;
+    try {
+      const r = await fetch("/api/gateways/" + encodeURIComponent(gid), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: input.value }) });
+      if (!r.ok) throw new Error(await r.text());
+      await refreshStatus();  // brings the new name everywhere
+      done();
+    } catch (e) {
+      error.textContent = e.message;
+      save.disabled = false;
+    }
+  };
+  save.addEventListener("click", submit);
+  cancel.addEventListener("click", done);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+    else if (e.key === "Escape") done();
+  });
+}
+function renderNewGateways() {
+  const box = $("newgw");
+  const unnamed = Object.entries(registry()).filter(([, r]) => !r.name && r.first_seen);
+  box.hidden = !unnamed.length;
+  const key = unnamed.map(([gid]) => gid).join(",");
+  if (!unnamed.length || box.dataset.key === key) return;  // unchanged: keep the button under the pointer
+  box.dataset.key = key;
+  const text = el("span", {}, unnamed.length === 1 ? "New gateway " : "New gateways: ");
+  unnamed.forEach(([gid, r], i) => {
+    if (i) text.append(", ");
+    text.append(el("span", { class: "mono", text: gid }), " (first seen " + new Date(r.first_seen).toLocaleString() + ")");
+  });
+  const name = el("button", { class: "btn", type: "button", text: "Name it" });
+  name.addEventListener("click", () => {
+    if (location.hash.startsWith("#dev") || location.hash.startsWith("#packet")) location.hash = "#" + (state.day || "overview");
+    setTimeout(() => {
+      $("gw-table").scrollIntoView({ block: "center" });
+      startRename(unnamed[0][0]);
+    }, 50);
+  });
+  box.replaceChildren(el("span", { class: "icon", "aria-hidden": "true", text: "+" }), text, name);
+}
+
+// ---------------------------------------------------------- own devices
+async function ownChanged() {  // after an add, rename or remove: names and numbers everywhere
+  await refreshStatus();
+  refreshDays();
+  if (!$("view-overview").hidden) await refreshDay();
+  else if (ex.route && ex.route.page === "device") { if (ex.data.device) renderDevicePage(); else openExplorer(ex.route); }
+  else if (ex.route && ex.route.page === "devices" && ex.data.devices) renderDeviceRows();
+}
+function ownForm(addr, done) {  // name an own device; with no addr, also asks for one (adding a device)
+  const addrInput = addr ? null : el("input", { type: "text", class: "mono", maxlength: "16", placeholder: "DevAddr, e.g. 00a1b2c3",
+                                                "aria-label": "DevAddr of the device" });
+  const name = el("input", { type: "text", maxlength: "40", placeholder: "name (optional)", value: devName(addr) || "",
+                             "aria-label": "Name of the device" });
+  const save = el("button", { class: "btn", type: "button", text: addr && isOwn(addr) ? "Save" : "Add" });
+  const cancel = el("button", { class: "linkish", type: "button", text: "Cancel" });
+  const error = el("span", { class: "error", role: "status" });
+  const submit = async () => {
+    const target = addr || addrInput.value.trim();
+    if (!target) { error.textContent = "enter the DevAddr"; return; }
+    save.disabled = true;
+    try {
+      const r = await fetch("/api/own/" + encodeURIComponent(target), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.value }) });
+      if (!r.ok) throw new Error(await r.text());
+      await done(true);
+    } catch (e) {
+      error.textContent = e.message;
+      save.disabled = false;
+    }
+  };
+  save.addEventListener("click", submit);
+  cancel.addEventListener("click", () => done(false));
+  for (const input of [addrInput, name]) {
+    if (input) input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); else if (e.key === "Escape") done(false); });
+  }
+  setTimeout(() => { (addrInput || name).focus(); if (!addrInput) name.select(); }, 0);
+  return el("span", { class: "rename" }, addrInput, name, save, cancel, error);
+}
+function removeConfirm(addr, done) {
+  const yes = el("button", { class: "btn", type: "button", text: "Remove" });
+  const no = el("button", { class: "linkish", type: "button", text: "Keep" });
+  const error = el("span", { class: "error", role: "status" });
+  yes.addEventListener("click", async () => {
+    yes.disabled = true;
+    try {
+      const r = await fetch("/api/own/" + encodeURIComponent(addr), { method: "DELETE" });
+      if (!r.ok && r.status !== 404) throw new Error(await r.text());
+      await done(true);
+    } catch (e) {
+      error.textContent = e.message;
+      yes.disabled = false;
+    }
+  });
+  no.addEventListener("click", () => done(false));
+  setTimeout(() => yes.focus(), 0);
+  return el("span", { class: "rename" }, "Remove from own devices? Recorded data stays.", yes, no, error);
+}
+function renderOwn(s) {
+  if (state.ownEdit) return;  // a refresh must not wipe an open editor
+  const devs = Object.keys(ownDevices()).sort((a, b) => (devName(a) || "~" + a).localeCompare(devName(b) || "~" + b));
+  const gws = Object.keys(s.gateways).sort((a, b) => s.gateways[b].frames - s.gateways[a].frames);
+  const rows = devs.map((dev) => {
+    const o = (s.own || {})[dev];
+    const per = gws.map((g) => (o ? Math.round((100 * (o.gateways[g] || 0)) / o.expected) + " % (" + fmt(o.gateways[g] || 0) + ")" : ""));
+    const link = el("a", { href: "#device/" + dev + "/" + s.day + "/" + s.day, title: "Details in the Devices tab" }, devLabel(dev));
+    const rename = el("button", { class: "linkish", type: "button", text: devName(dev) ? "Rename" : "Name it" });
+    const remove = el("button", { class: "linkish", type: "button", text: "Remove" });
+    rename.addEventListener("click", () => editOwn(dev, "rename"));
+    remove.addEventListener("click", () => editOwn(dev, "remove"));
+    return { id: dev, cells: [link, ...(o ? [fmt(o.expected), fmt(o.heard), fmt(o.expected - o.heard)] : ["no uplinks", "", ""]),
+                              ...per, el("span", { class: "actions" }, rename, "·", remove)] };
+  });
+  $("own-empty").hidden = devs.length > 0;
+  $("own-table").hidden = !devs.length;
+  fillTable($("own-table"), ["Device", "Sent", "Heard", "Lost by all", ...gws.map((g) => gwName(g) || g), ""],
+            rows, new Set([1, 2, 3, ...gws.map((_, i) => i + 4)]));
+}
+function editOwn(dev, mode) {
+  const row = [...$("own-table").querySelectorAll("tr[data-id]")].find((r) => r.dataset.id === dev);
+  if (!row) return;
+  state.ownEdit = dev;
+  const done = async (changed) => {
+    state.ownEdit = null;
+    if (changed) await ownChanged();
+    else if (state.summary) renderOwn(state.summary);
+  };
+  if (mode === "rename") row.cells[0].replaceChildren(ownForm(dev, done));
+  else row.cells[row.cells.length - 1].replaceChildren(removeConfirm(dev, done));
+}
+// ------------------------------------------------------- channel occupancy
+const OCC_BINS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2];  // most channels stay under 2 %, a flood takes 40 %
+const OCC_LABELS = ["under 0.5 %", "0.5–1 %", "1–2 %", "2–5 %", "5–10 %", "10–20 %", "20 % or more"];
+const OCC_CLASSES = ["lorawan", "other", "sf5", "bad_crc"];  // the order of the seconds per hour
+function occBin(share) {
+  if (!(share > 0)) return 0;
+  let i = 0;
+  while (i < OCC_BINS.length && share >= OCC_BINS[i]) i++;
+  return i + 1;
+}
+function occSpan(s, hour) {  // the seconds of that local hour that have passed (today's current hour is not over)
+  const total = (s.hour_seconds || [])[hour] ?? 3600;
+  if (!state.days.some((d) => d.day === s.day && d.today)) return total;
+  const now = new Date();
+  if (hour > now.getHours()) return 0;
+  return hour === now.getHours() ? Math.min(total, now.getMinutes() * 60 + now.getSeconds()) : total;
+}
+const occShare = (x) => (100 * x).toFixed(x < 0.01 ? 2 : 1) + " %";
+function occGrid(s, gid) {  // channel -> {cells: 24 x {share, parts} or null, day: share of the day so far}
+  const grid = {};
+  const passed = Array.from({ length: 24 }, (_, h) => occSpan(s, h)).reduce((a, b) => a + b, 0);
+  for (const [freq, hours] of Object.entries((s.occupancy || {})[gid] || {})) {
+    const cells = Array(24).fill(null);
+    let busy = 0;
+    for (const [h, ...seconds] of hours) {
+      const span = occSpan(s, h), sum = seconds.reduce((a, b) => a + b, 0);
+      busy += sum;
+      if (span >= 60) cells[h] = { share: sum / span, parts: Object.fromEntries(OCC_CLASSES.map((c, i) => [c, seconds[i] / span])) };
+    }
+    grid[freq] = { cells, day: passed ? busy / passed : 0 };
+  }
+  return grid;
+}
+function renderOccupancy(s) {
+  const card = $("occ-card");
+  const gws = Object.keys(s.occupancy || {}).sort((a, b) => ((s.gateways[b] || {}).frames || 0) - ((s.gateways[a] || {}).frames || 0));
+  card.hidden = !gws.length;
+  if (!gws.length) return;
+  if (!gws.includes(state.occGateway)) state.occGateway = gws[0];
+  $("occ-gws").replaceChildren(...gws.map((gid) => {
+    const b = el("button", { class: "btn", type: "button", "aria-pressed": String(gid === state.occGateway), text: gwName(gid) || gid });
+    b.addEventListener("click", () => { state.occGateway = gid; renderOccupancy(state.summary); });
+    return b;
+  }));
+  const legend = $("occ-legend");
+  if (!legend.childElementCount) {
+    legend.append(...OCC_LABELS.map((label, i) => el("span", {}, el("span", { class: "swatch q" + (i + 1), "aria-hidden": "true" }), label)),
+                  el("span", {}, el("span", { class: "swatch q0", "aria-hidden": "true" }), "nothing decoded"));
+  }
+  state.occGrid = occGrid(s, state.occGateway);
+  drawOccupancy($("occ-chart"), state.occGrid, s);
+  const freqs = Object.keys(state.occGrid).sort((a, b) => a - b);
+  fillTable($("occ-table"), ["Channel", ...Array.from({ length: 24 }, (_, h) => pad(h)), "Day"],
+    freqs.map((f) => ({ cells: [mhz(+f), ...state.occGrid[f].cells.map((c) => (c && c.share > 0 ? occShare(c.share).replace(" %", "") : "")),
+                                occShare(state.occGrid[f].day).replace(" %", "")] })),
+    new Set(Array.from({ length: 25 }, (_, i) => i + 1)));
+}
+function drawOccupancy(svg, grid, s) {
+  const freqs = Object.keys(grid).sort((a, b) => a - b);
+  const W = Math.max(320, Math.floor(svg.parentElement.clientWidth));
+  const m = { l: 62, r: 58, t: 18, b: 2 }, rowH = 20;
+  const H = m.t + freqs.length * rowH + m.b;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.setAttribute("aria-label", "Channel occupancy per hour at " + (gwName(state.occGateway) || state.occGateway) +
+    "; the numbers are in the table below");
+  svg.replaceChildren();
+  const cw = (W - m.l - m.r) / 24;
+  const label = (x, y, text, anchor) => {
+    const t = svgEl("text", { x, y, class: "heat-label", "text-anchor": anchor });
+    t.textContent = text;
+    svg.append(t);
+  };
+  for (let h = 0; h < 24; h += 3) label(m.l + (h + 0.5) * cw, 12, pad(h), "middle");
+  label(W - m.r + 8, 12, "day", "start");
+  const now = new Date(), today = state.days.some((d) => d.day === s.day && d.today);
+  freqs.forEach((f, r) => {
+    const y = m.t + r * rowH;
+    label(m.l - 8, y + rowH / 2 + 4, mhz(+f), "end");
+    grid[f].cells.forEach((c, h) => {
+      if (today && h > now.getHours()) return;  // not yet
+      svg.append(svgEl("rect", { x: m.l + h * cw + 1, y: y + 1, width: Math.max(1, cw - 2), height: rowH - 2, rx: 2,
+                                 class: "cell q" + (c ? occBin(c.share) : 0), "data-f": f, "data-h": h }));
+    });
+    label(W - m.r + 8, y + rowH / 2 + 4, occShare(grid[f].day), "start");
+  });
+}
+function showOccTip(target) {
+  const f = target.dataset.f, h = +target.dataset.h, c = (state.occGrid[f] || {}).cells[h];
+  const tip = $("occ-tip"), card = $("occ-card");
+  tip.replaceChildren(el("div", { class: "tip-title", text: mhz(+f) + " MHz, " + pad(h) + ":00–" + pad((h + 1) % 24) + ":00, " +
+                                                            (gwName(state.occGateway) || state.occGateway) }));
+  if (!c || !(c.share > 0)) tip.append(el("div", { class: "tip-row" }, el("span", { class: "label", text: "nothing decoded" })));
+  else {
+    tip.append(el("div", { class: "tip-row" }, el("strong", { text: occShare(c.share) }), el("span", { class: "label", text: "on air" })));
+    for (const [cls, name] of [["lorawan", "LoRaWAN"], ["other", "other"], ["sf5", "SF5"], ["bad_crc", "bad CRC"]]) {
+      if (c.parts[cls] > 0) tip.append(el("div", { class: "tip-row" }, el("span", { class: "key c-" + cls, "aria-hidden": "true" }),
+                                           el("strong", { text: occShare(c.parts[cls]) }), el("span", { class: "label", text: name })));
+    }
+  }
+  tip.hidden = false;
+  const box = card.getBoundingClientRect(), r = target.getBoundingClientRect();
+  let left = r.right - box.left + 8;
+  if (left + tip.offsetWidth > box.width - 8) left = r.left - box.left - tip.offsetWidth - 8;
+  tip.style.left = Math.max(8, left) + "px";
+  tip.style.top = Math.max(8, r.bottom - box.top + 4) + "px";
+}
+function renderChannels(s) {
+  const gws = Object.keys(s.gateways).sort((a, b) => s.gateways[b].frames - s.gateways[a].frames);
+  const bad = s.channels_bad || {};
+  const freqs = [...new Set([...Object.keys(s.channels), ...Object.keys(bad)])].sort((a, b) => a - b);
+  const sum = (per) => Object.values(per || {}).reduce((a, b) => a + b, 0);
+  const cell = (good, poor) => fmt(good || 0) + (poor ? " (+" + fmt(poor) + " bad)" : "");
+  const rows = freqs.map((freq) => {
+    const per = s.channels[freq] || {}, perBad = bad[freq] || {};
+    return { cells: [(+freq / 1e6).toFixed(3) + " MHz", ...gws.map((g) => cell(per[g], perBad[g])), cell(sum(per), sum(perBad))] };
+  });
+  fillTable($("ch-table"), ["Channel", ...gws.map((g) => gwName(g) || g), "Total"], rows,
+            new Set([...gws.map((_, i) => i + 1), gws.length + 1]));
+}
+
+// ============================================================ explorer
+const ex = { route: null, from: null, to: null, data: {}, sort: { key: "heard", dir: -1 }, filter: "",
+             ownOnly: false, showAll: false, otherAll: false, seq: 0 };
+
+function todayDay() {
+  return (state.status && state.status.day) || ((state.days.find((d) => d.today) || state.days[0] || {}).day) ||
+    new Date().toISOString().slice(0, 10);
+}
+function firstDay() { return state.days.length ? state.days[state.days.length - 1].day : todayDay(); }
+function deviceHref(addr, from, to) { return "#device/" + addr + "/" + (from || ex.from) + "/" + (to || ex.to); }
+function inspect(day, key) { return el("a", { href: "#packet/" + day + "/" + key, text: "Inspect" }); }
+function bucketLabel(b, hourly) {
+  const t = new Date(b.t);
+  return hourly ? t.toLocaleString([], { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })
+                : t.toLocaleDateString([], { weekday: "short", day: "numeric", month: "numeric", year: "numeric" });
+}
+function batteryShort(b) {
+  if (!b) return "–";
+  if (b.value === 0) return "external";
+  if (b.value === 255) return "n/a";
+  return Math.round(((b.value - 1) * 100) / 253) + " %";
+}
+function sfText(sf) {
+  const sfs = Object.keys(sf).map(Number).sort((a, b) => a - b);
+  return sfs.length ? "SF" + sfs[0] + (sfs.length > 1 ? "–" + sfs[sfs.length - 1] : "") : "–";
+}
+function channelsText(list) {
+  if (!list.length) return "–";
+  if (list.length <= 3) return list.map(mhz).join(", ");
+  return mhz(list[0]) + "–" + mhz(list[list.length - 1]) + " (" + list.length + ")";
+}
+async function fetchJSON(url) {  // the error carries the HTTP status and the server's explanation
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) {
+    const e = new Error((await r.text()) || "HTTP " + r.status);
+    e.status = r.status;
+    throw e;
+  }
+  return r.json();
+}
+function card(title, id, sub, ...kids) {
+  return el("section", { class: "card", id }, el("h2", { text: title }), sub ? el("p", { class: "sub", text: sub }) : null, ...kids);
+}
+function exNote(data) {
+  const parts = [];
+  if (data && data.clamped) parts.push("at most " + data.max_days + " days at once: showing " + data.from + " to " + data.to);
+  if (data && data.days) parts.push(data.days.length + (data.days.length === 1 ? " day of data" : " days of data"));
+  if (data && data.skipped && data.skipped.length) parts.push("could not read " + data.skipped.join(", "));
+  $("ex-note").textContent = parts.join(", ");
+}
+
+// ------------------------------------------------------------ routing
+function route() {
+  const h = location.hash.slice(1);
+  let m;
+  if ((m = /^devices(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(h))) return openExplorer({ page: "devices", from: m[1], to: m[2] });
+  if ((m = /^device\/([0-9a-f]{8})(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(h))) {
+    return openExplorer({ page: "device", dev: m[1], from: m[2], to: m[3] });
+  }
+  if ((m = /^packet\/(\d{4}-\d{2}-\d{2})\/([0-9a-f]{40})$/.exec(h))) return openExplorer({ page: "packet", day: m[1], key: m[2] });
+  if (h === "health") return openHealth();
+  openOverview(/^\d{4}-\d{2}-\d{2}$/.test(h) ? h : null);
+}
+function showView(name) {  // overview, explorer or health
+  for (const view of ["overview", "explorer", "health"]) $("view-" + view).hidden = view !== name;
+  for (const [id, view] of [["tab-overview", "overview"], ["tab-devices", "explorer"], ["tab-health", "health"]]) {
+    if (view === name) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current");
+  }
+}
+function openOverview(day) {
+  showView("overview");
+  if (day && day !== state.day && state.days.some((d) => d.day === day)) return selectDay(day);
+  renderDay();  // drawn while hidden, so at the wrong width
+  refreshDay();
+}
+function openExplorer(r) {
+  showView("explorer");
+  ex.route = r;
+  if (r.page !== "packet") {
+    const today = todayDay();
+    ex.from = r.from || dayShift(today, -6);
+    ex.to = r.to || today;
+  }
+  $("tab-devices").href = location.hash || "#devices";
+  renderRange();
+  $("ex-note").textContent = "";
+  const seq = ++ex.seq;
+  if (r.page === "devices") loadDevices(seq);
+  else if (r.page === "device") loadDevice(seq);
+  else loadPacket(seq);
+}
+function renderRange() {
+  const bar = $("ex-range");
+  bar.hidden = ex.route.page === "packet";
+  if (bar.hidden) return;
+  const today = todayDay(), first = firstDay();
+  const presets = { 1: [today, today], 7: [dayShift(today, -6), today], 30: [dayShift(today, -29), today],
+                    all: [first < today ? first : today, today] };
+  for (const b of bar.querySelectorAll("[data-days]")) {
+    const [f, t] = presets[b.dataset.days];
+    b.setAttribute("aria-pressed", String(f === ex.from && t === ex.to));
+  }
+  const from = $("ex-from"), to = $("ex-to");
+  from.value = ex.from;
+  to.value = ex.to;
+  for (const input of [from, to]) { input.min = first; input.max = today; }
+}
+function goRange(from, to) {
+  if (from > to) [from, to] = [to, from];
+  location.hash = (ex.route.page === "device" ? "device/" + ex.route.dev : "devices") + "/" + from + "/" + to;
+}
+
+// ------------------------------------------------------- devices list
+function loadDevices(seq) {
+  const q = "?from=" + ex.from + "&to=" + ex.to;
+  ex.data.devices = ex.data.joins = ex.data.other = null;
+  ex.showAll = ex.otherAll = false;
+  const loading = () => el("p", { class: "muted", text: "Loading…" });
+  $("ex-body").replaceChildren(
+    card("Devices", "ex-devices", "LoRaWAN devices whose uplinks a gateway heard from " + ex.from + " to " + ex.to +
+      ". Sent is counted from each device's frame counter, so it includes uplinks no gateway heard (but not " +
+      "those sent while nothing was being recorded). Per gateway: " +
+      "median RSSI and the share of the device's uplinks that gateway heard. Click a device for its details.",
+      el("div", { id: "ex-devices-body" }, loading())),
+    card("Join requests", "ex-joins", "Devices asking to join (OTAA). DevEUI and JoinEUI travel unencrypted; the " +
+      "DevAddr the network answers with does not, so a join cannot be matched to a device above. DevNonce: picked at random " +
+      "in LoRaWAN 1.0.0–1.0.3; from 1.0.4 on it counts every join attempt the device has made.",
+      el("div", { id: "ex-joins-body" }, loading())),
+    card("Other radio systems", "ex-other", "Packets that are not LoRaWAN, grouped by system: by their header when it " +
+      "reads as text (as sent, or after XOR 0x85, which some proprietary radios use), else by their first 3 bytes.",
+      el("div", { id: "ex-other-body" }, loading())));
+  for (const [what, render] of [["devices", renderDeviceList], ["joins", renderJoins], ["other", renderOther]]) {
+    fetchJSON("/api/" + what + q).then((data) => {
+      if (seq !== ex.seq) return;
+      ex.data[what] = data;
+      if (what === "devices") exNote(data);
+      render();
+    }).catch((e) => {
+      if (seq === ex.seq) $("ex-" + what + "-body").replaceChildren(el("p", { class: "err", text: "Could not load: " + e.message }));
+    });
+  }
+}
+function deviceGateways(devices) {  // the gateways that heard any of them, most useful first
+  const count = {};
+  for (const d of devices) for (const gid of Object.keys(d.gateways)) count[gid] = (count[gid] || 0) + 1;
+  return Object.keys(count).sort((a, b) => count[b] - count[a] || a.localeCompare(b));
+}
+function deviceColumns(gws) {
+  return [
+    { key: "device", label: "Device", get: (d) => (devName(d.dev_addr) || "￿") + d.dev_addr,
+      cell: (d) => el("span", {}, el("a", { href: deviceHref(d.dev_addr) }, devLabel(d.dev_addr)),
+                      isOwn(d.dev_addr) ? el("span", {}, " ", el("span", { class: "tag", text: "own" })) : null) },
+    { key: "network", label: "Network", get: (d) => d.network.label, cell: (d) => d.network.label },
+    { key: "heard", label: "Heard", num: true, get: (d) => d.heard, cell: (d) => fmt(d.heard),
+      title: "uplinks at least one gateway heard" },
+    { key: "sent", label: "Sent", num: true, get: (d) => d.sent, cell: (d) => fmt(d.sent),
+      title: "uplinks sent while recording, counted from the frame counter" },
+    { key: "lost", label: "Lost", num: true, get: (d) => d.lost / d.sent, cell: (d) => pctOf(d.lost, d.sent),
+      title: "share of the sent uplinks that no gateway heard" },
+    { key: "interval", label: "Every", num: true, dir: 1, get: (d) => (d.interval_s == null ? Infinity : d.interval_s),
+      cell: (d) => dur(d.interval_s), title: "median time between uplinks" },
+    { key: "sf", label: "SF", dir: 1, get: (d) => Math.min(...Object.keys(d.sf).map(Number)), cell: (d) => sfText(d.sf) },
+    ...gws.map((gid) => ({
+      key: "gw:" + gid, label: gwShort(gid), num: true, title: "median RSSI at " + (gwName(gid) || gid) +
+        ", and the share of the device's uplinks it heard",
+      get: (d) => (d.gateways[gid] ? d.gateways[gid].rssi_median : -Infinity),
+      cell: (d) => {
+        const g = d.gateways[gid];
+        return g ? el("span", {}, dbm(g.rssi_median), el("span", { class: "muted", text: " " + pctOf(g.heard, d.heard) })) : "–";
+      } })),
+    { key: "battery", label: "Battery", num: true, get: (d) => (d.battery ? d.battery.value : -1),
+      cell: (d) => (d.battery ? el("span", { title: d.battery.text + ", margin " + d.battery.margin + " dB, " + when(d.battery.at) },
+                                   batteryShort(d.battery)) : "–") },
+    { key: "adrackreq", label: "ADRACKReq", num: true, get: (d) => d.adr_ack_req / d.heard,
+      cell: (d) => (d.adr_ack_req ? pctOf(d.adr_ack_req, d.heard) : "–"),
+      title: "share of uplinks asking whether the network still hears the device (no downlink for a long while)" },
+    { key: "last", label: "Last heard", get: (d) => d.last, cell: (d) => when(d.last) },
+  ];
+}
+function renderDeviceList() {
+  const data = ex.data.devices, host = $("ex-devices-body");
+  if (!data.devices.length) {
+    host.replaceChildren(el("p", { class: "muted", text: "No LoRaWAN uplinks in this range." }));
+    return;
+  }
+  const search = el("input", { type: "search", placeholder: "Find a DevAddr, name or network", value: ex.filter,
+                               "aria-label": "Find a device" });
+  const own = el("input", { type: "checkbox" });
+  own.checked = ex.ownOnly;
+  const more = el("button", { class: "btn", type: "button", id: "ex-more", hidden: "" });
+  const csv = el("button", { class: "btn", type: "button", text: "Download CSV" });
+  csv.addEventListener("click", downloadDevicesCsv);
+  host.replaceChildren(
+    data.clamped ? el("p", { class: "sub", text: "At most " + data.max_days + " days at once: these are the devices heard from " +
+                                                 data.from + " to " + data.to + "." }) : "",
+    el("div", { class: "toolbar" }, search, el("label", {}, own, "Own devices only"), el("span", { class: "muted", id: "ex-count" }), csv),
+    el("div", { class: "tablewrap" }, el("table", { id: "ex-dev-table" })), more);
+  search.addEventListener("input", () => { ex.filter = search.value; ex.showAll = false; renderDeviceRows(); });
+  own.addEventListener("change", () => { ex.ownOnly = own.checked; renderDeviceRows(); });
+  more.addEventListener("click", () => { ex.showAll = true; renderDeviceRows(); });
+  renderDeviceRows();
+}
+function deviceList() {  // the devices as the list shows them: filtered and sorted
+  const all = ex.data.devices.devices;
+  const cols = deviceColumns(deviceGateways(all));
+  const col = cols.find((c) => c.key === ex.sort.key) || cols[2];
+  const q = ex.filter.trim().toLowerCase();
+  const list = all.filter((d) => (!ex.ownOnly || isOwn(d.dev_addr)) &&
+    (!q || (d.dev_addr + " " + (devName(d.dev_addr) || "") + " " + d.network.label).toLowerCase().includes(q)));
+  const cmp = (a, b) => (typeof a === "string" ? a.localeCompare(b) : (a > b) - (a < b));
+  list.sort((a, b) => cmp(col.get(a), col.get(b)) * ex.sort.dir || b.heard - a.heard);
+  return { all, cols, col, list };
+}
+function downloadDevicesCsv() {
+  const { all, list } = deviceList();
+  const gws = deviceGateways(all);
+  const label = (gid) => (gwName(gid) || gid).replace(/[^0-9A-Za-z]+/g, "_");
+  const round = (x, digits) => (x == null ? null : Math.round(x * 10 ** digits) / 10 ** digits);
+  const header = ["dev_addr", "name", "own", "network", "netid", "heard", "sent", "lost", "lost_pct", "unrecorded", "interval_s",
+                  "sf", "adr_ack_req_pct", "battery", "battery_pct", "link_margin_db", "battery_at", "first", "last",
+                  ...gws.flatMap((g) => ["heard_" + label(g), "rssi_median_" + label(g), "snr_median_" + label(g)])];
+  const rows = list.map((d) => {
+    const b = d.battery, level = b && b.value >= 1 && b.value <= 254 ? round(((b.value - 1) * 100) / 253, 1) : null;
+    return [d.dev_addr, devName(d.dev_addr) || "", isOwn(d.dev_addr) ? 1 : 0, d.network.label, d.network.netid || "", d.heard, d.sent,
+            d.lost, round((100 * d.lost) / d.sent, 2), d.unrecorded || 0, d.interval_s, sfText(d.sf),
+            round((100 * d.adr_ack_req) / d.heard, 2), b ? b.value : null, level, b ? b.margin : null, b ? b.at : null, d.first, d.last,
+            ...gws.flatMap((g) => { const x = d.gateways[g]; return x ? [x.heard, x.rssi_median, x.snr_median] : [null, null, null]; })];
+  });
+  downloadCsv("lorawan_devices_" + ex.data.devices.from + "_to_" + ex.data.devices.to + ".csv", header, rows);
+}
+function renderDeviceRows() {
+  const table = $("ex-dev-table");
+  if (!table || !ex.data.devices) return;
+  const { all, cols, col, list } = deviceList();
+  const shown = ex.showAll ? list : list.slice(0, 300);
+
+  const head = el("tr");
+  for (const c of cols) {
+    const button = el("button", { class: "sorter", type: "button", text: c.label, title: c.title || null });
+    button.addEventListener("click", () => {
+      ex.sort = ex.sort.key === c.key ? { key: c.key, dir: -ex.sort.dir } : { key: c.key, dir: c.dir || (c.num || c.key === "last" ? -1 : 1) };
+      renderDeviceRows();
+    });
+    head.append(el("th", { scope: "col", class: c.num ? "num" : null,
+                           "aria-sort": c.key === col.key ? (ex.sort.dir > 0 ? "ascending" : "descending") : null }, button));
+  }
+  const body = el("tbody");
+  for (const d of shown) {
+    const tr = el("tr", { class: "clickable" + (isOwn(d.dev_addr) ? " selected" : "") });
+    for (const c of cols) {
+      const v = c.cell(d);
+      tr.append(el("td", { class: c.num ? "num" : null }, v instanceof Node ? v : String(v)));
+    }
+    tr.addEventListener("click", (e) => { if (!e.target.closest("a")) location.hash = deviceHref(d.dev_addr); });
+    body.append(tr);
+  }
+  table.replaceChildren(el("thead", {}, head), body);
+  $("ex-count").textContent = (list.length === all.length ? fmt(all.length) + " devices" : fmt(list.length) + " of " + fmt(all.length) + " devices") +
+    ", " + fmt(list.reduce((n, d) => n + d.heard, 0)) + " uplinks heard";
+  const more = $("ex-more");
+  more.hidden = shown.length === list.length;
+  more.textContent = "Show all " + fmt(list.length);
+}
+function renderJoins() {
+  const data = ex.data.joins, host = $("ex-joins-body");
+  if (!data.joins.length) return host.replaceChildren(el("p", { class: "muted", text: "No join requests in this range." }));
+  const table = el("table");
+  const best = (map) => Object.entries(map).sort((a, b) => (b[1] ?? -999) - (a[1] ?? -999))
+    .map(([gid, rssi]) => gwShort(gid) + " " + (rssi == null ? "?" : Math.round(rssi))).join(", ");
+  const nonce = (n) => (!n ? "–" : el("span", {}, String(n.last), n.kind ? el("span", { class: "muted",
+    text: n.kind === "counter" ? " counting up: LoRaWAN 1.0.4 or 1.1" : " random: LoRaWAN 1.0.0–1.0.3" }) : null));
+  fillTable(table, ["DevEUI", "JoinEUI", "Requests", "DevNonce (latest)", "SF", "First", "Last", "Heard by (best RSSI)"],
+    data.joins.map((j) => ({ cells: [el("span", { class: "mono", text: j.dev_eui }), el("span", { class: "mono", text: j.join_eui }),
+      fmt(j.requests), nonce(j.dev_nonce), sfText(j.sf), when(j.first), when(j.last), best(j.gateways)] })), new Set([2]));
+  host.replaceChildren(el("div", { class: "tablewrap" }, table),
+    data.total > data.joins.length ? el("p", { class: "muted", text: "The " + data.joins.length + " most active of " + fmt(data.total) + "." }) : "");
+}
+const OTHER_CHARTS = 6;  // charts before "Show all"
+function otherTitle(g) {  // a group as its chart names it: the header as text, else its first bytes
+  const sf = g.sf == null ? "FSK " : "SF" + g.sf + " ";
+  return g.text ? el("span", { class: "panel-title", text: sf + "“" + g.text + "”" })
+                : el("span", { class: "panel-title" }, sf, el("span", { class: "mono", text: spaced(g.head) + " …" }));
+}
+function otherName(g) {
+  return (g.sf == null ? "FSK " : "SF" + g.sf + " ") + (g.text ? "“" + g.text + "”" : spaced(g.head) + " …");
+}
+function otherCharts(data) {  // packets per hour or day, one small chart per group on the same time axis
+  const unit = data.hourly ? "hour" : "day", shown = ex.otherAll ? data.other : data.other.slice(0, OTHER_CHARTS);
+  const panels = el("div", { class: "panels", id: "ex-other-charts" }, ...shown.map((g, i) => {
+    const svg = svgEl("svg", { class: "chart", role: "img",
+      "aria-label": otherName(g) + ": packets per " + unit + "; the numbers are in the table below the charts" });
+    attachTip(svg, (b) => {
+      const n = ex.data.other.other[i].series[b];
+      return { title: bucketLabel(ex.data.other.buckets[b], ex.data.other.hourly), rows: [["c-other", fmt(n), n === 1 ? "packet" : "packets"]] };
+    });
+    const max = Math.max(...g.series), peak = g.series.indexOf(max);
+    return el("div", { class: "panel", "data-i": i },
+      el("div", { class: "panel-head" }, otherTitle(g), el("span", { class: "panel-total", text: fmt(g.packets) + " packets" })),
+      el("p", { class: "panel-note", text: max ? "busiest " + unit + ": " + fmt(max) + ", " + bucketLabel(data.buckets[peak], data.hourly)
+                                               : "none in this range" }),
+      svg);
+  }));
+  const numbers = el("table");
+  fillTable(numbers, [data.hourly ? "Hour" : "Day", ...shown.map(otherName)],
+    data.buckets.map((b, i) => ({ i, cells: [bucketLabel(b, data.hourly), ...shown.map((g) => fmt(g.series[i]))] }))
+      .filter((row) => shown.some((g) => g.series[row.i])), new Set(shown.map((_, i) => i + 1)));
+  let more = "";  // replaceChildren would print null
+  if (data.other.length > OTHER_CHARTS) {
+    more = el("button", { class: "linkish more", type: "button",
+      text: ex.otherAll ? "Show only the " + OTHER_CHARTS + " biggest" : "Show all " + data.other.length + " groups" });
+    more.addEventListener("click", () => { ex.otherAll = !ex.otherAll; renderOther(); });
+  }
+  return [el("h3", { text: "Packets per " + unit }),
+          el("p", { class: "sub", text: "Each transmission counted once, however many gateways heard it. Every chart has " +
+            "its own scale; the time axis is the same for all, so what happens at the same time lines up." }),
+          panels, more, details("Show the numbers", numbers)];
+}
+function drawOther() {  // charts need their width, so after the card is in place
+  const data = ex.data.other, host = $("ex-other-charts");
+  if (!data || !host || $("view-explorer").hidden) return;
+  for (const panel of host.children) drawOtherChart(panel.querySelector("svg"), data, data.other[+panel.dataset.i]);
+}
+function drawOtherChart(svg, d, g) {
+  const H = 140, m = { l: 44, r: 8, t: 10, b: 24 };
+  const { W, pw, ph } = chartFrame(svg, H, m);
+  const B = d.buckets, band = pw / B.length, bw = Math.max(1, Math.min(18, band * 0.7));
+  const ticks = niceTicks(Math.max(0, ...g.series)), top = ticks[ticks.length - 1], base = m.t + ph;
+  yAxis(svg, ticks, (v) => base - (v / top) * ph, m, W, compact);
+  g.series.forEach((v, i) => {
+    if (v) {
+      const h = Math.max(1.5, (v / top) * ph);
+      svg.append(svgEl("path", { d: barPath(m.l + i * band + (band - bw) / 2, base - h, bw, h, 4), class: "bar c-other", "data-i": i }));
+    }
+    svg.append(svgEl("rect", { x: m.l + i * band, y: m.t, width: band, height: ph, class: "hit", "data-i": i,
+                               tabindex: B.length <= 62 ? 0 : -1, "aria-label": bucketLabel(B[i], d.hourly) + ": " + fmt(v) + " packets" }));
+  });
+  xAxis(svg, d, band, m, H);
+}
+function renderOther() {
+  const data = ex.data.other, host = $("ex-other-body");
+  if (!data.other.length) return host.replaceChildren(el("p", { class: "muted", text: "Nothing but LoRaWAN in this range." }));
+  const table = el("table");
+  fillTable(table, ["SF", "First bytes", "As text", "Packets", "Bytes", "Channels", "First", "Last", "Heard by (packets, best RSSI)", ""],
+    data.other.map((g) => ({ cells: [
+      g.sf == null ? "FSK" : "SF" + g.sf, el("span", { class: "mono", text: spaced(g.head) + (g.text ? "" : " …") }),
+      g.text ? "“" + g.text + "”" + (g.xor85 ? " after XOR 0x85" : "") : "–", fmt(g.packets),
+      g.size_min === g.size_max ? String(g.size_min) : g.size_min + "–" + g.size_max, channelsText(g.channels),
+      when(g.first), when(g.last),
+      Object.entries(g.gateways).sort((a, b) => b[1][0] - a[1][0])
+        .map(([gid, [n, rssi]]) => gwShort(gid) + " " + fmt(n) + " (" + (rssi == null ? "?" : Math.round(rssi)) + ")").join(", "),
+      g.example ? el("a", { href: "#packet/" + g.example[0] + "/" + g.example[1], text: "Example" }) : ""] })),
+    new Set([3]));
+  host.replaceChildren(...otherCharts(data), el("h3", { text: "Groups" }), el("div", { class: "tablewrap" }, table),
+    data.total > data.other.length ? el("p", { class: "muted", text: "The " + data.other.length + " biggest of " + fmt(data.total) + " groups." }) : "");
+  drawOther();
+}
+
+// ------------------------------------------------------------- device
+function deviceHead(addr) {
+  const title = el("h2", { class: "big" }, "Device ", devLabel(addr));
+  if (isOwn(addr)) title.append(el("span", { class: "tag", text: "own" }));
+  const actions = el("span", { class: "actions" });
+  const fill = () => {
+    actions.replaceChildren();
+    const finish = async (changed) => { if (changed) await ownChanged(); else fill(); };
+    if (isOwn(addr)) {
+      const rename = el("button", { class: "btn", type: "button", text: devName(addr) ? "Rename" : "Name it" });
+      const remove = el("button", { class: "linkish", type: "button", text: "Remove from own devices" });
+      rename.addEventListener("click", () => actions.replaceChildren(ownForm(addr, finish)));
+      remove.addEventListener("click", () => actions.replaceChildren(removeConfirm(addr, finish)));
+      actions.append(rename, remove);
+    } else {
+      const add = el("button", { class: "btn", type: "button", text: "Add to own devices" });
+      add.addEventListener("click", () => actions.replaceChildren(ownForm(addr, finish)));
+      actions.append(add);
+    }
+  };
+  fill();
+  return el("div", { class: "card-head devhead" }, title, actions);
+}
+async function loadDevice(seq) {
+  const r = ex.route, host = $("ex-body");
+  const back = () => el("a", { class: "back", href: "#devices/" + ex.from + "/" + ex.to, text: "← All devices" });
+  if (ex.data.device && ex.data.device.dev_addr === r.dev) host.classList.add("loading");
+  else host.replaceChildren(back(), deviceHead(r.dev), el("p", { class: "muted", text: "Loading…" }));
+  try {
+    const d = await fetchJSON("/api/device/" + r.dev + "?from=" + ex.from + "&to=" + ex.to);
+    if (seq !== ex.seq) return;
+    ex.data.device = d;
+    exNote(d);
+    renderDevicePage();
+  } catch (e) {
+    if (seq !== ex.seq) return;
+    ex.data.device = null;
+    host.replaceChildren(back(), deviceHead(r.dev), el("p", { class: e.status === 404 ? "muted" : "err",
+      text: e.status === 404 ? "No uplinks from this device and no downlinks to it between " + ex.from + " and " + ex.to + "."
+                             : "Could not load: " + e.message }));
+  } finally {
+    host.classList.remove("loading");
+  }
+}
+function renderDevicePage() {
+  const d = ex.data.device, host = $("ex-body");
+  if (!d) return;
+  const s = d.summary;
+  const parts = [el("a", { class: "back", href: "#devices/" + ex.from + "/" + ex.to, text: "← All devices" }), deviceHead(d.dev_addr),
+    el("p", { class: "sub", text: d.network.label + (d.network.netid ? " (NetID " + d.network.netid + ")" : "") + ", " +
+      d.from + (d.to !== d.from ? " to " + d.to : "") + (d.clamped ? " (the last " + d.max_days + " days of the range)" : "") +
+      ". Application data is encrypted; what follows is what the radio headers show." })];
+  if (s) parts.push(deviceTiles(s), uplinksCard(d), signalCard(d));
+  else parts.push(el("p", { class: "muted", text: "No uplinks from this device in this range, only downlinks to it." }));
+  if (d.battery.length) parts.push(batteryCard(d));
+  parts.push(macCard(d));
+  if (s) parts.push(packetsCard(d));
+  if (d.downlinks.length) parts.push(downlinksCard(d));
+  host.replaceChildren(...parts);
+  drawDevice();
+}
+function drawDevice() {  // charts need their width, so after the page is in place
+  const d = ex.data.device;
+  if (!d || $("view-explorer").hidden) return;
+  if ($("dev-uplinks")) drawUplinks($("dev-uplinks"), d);
+  if ($("dev-signal")) drawSignal($("dev-signal"), d);
+  if ($("dev-battery")) drawBattery($("dev-battery"), d);
+}
+function deviceTiles(s) {
+  const host = el("section", { class: "tiles", "aria-label": "Totals for this device" });
+  const add = (label, value, sub) => host.append(el("div", { class: "tile" }, el("div", { class: "tile-label", text: label }),
+    el("div", { class: "tile-value", text: value }), el("div", { class: "tile-sub", text: sub || "" })));
+  add("Uplinks heard", compact(s.heard), "by at least one gateway");
+  add("Sent", compact(s.sent), "counted from the frame counter");
+  add("Lost", pctOf(s.lost, s.sent), fmt(s.lost) + " no gateway heard" +
+      (s.unrecorded ? "; " + fmt(s.unrecorded) + " more were sent while nothing was recorded" : ""));
+  add("Interval", dur(s.interval_s), "median time per uplink");
+  add("Airtime", s.airtime_s < 120 ? s.airtime_s.toFixed(1) + " s" : dur(s.airtime_s),
+      s.duty_pct == null ? "" : "duty cycle " + s.duty_pct.toFixed(s.duty_pct < 0.1 ? 3 : 2) + " %");
+  const b = s.battery;
+  add("Battery", batteryShort(b), b ? "margin " + (b.margin > 0 ? "+" : "") + b.margin + " dB, " + when(b.at) : "no status answers");
+  const sfs = Object.entries(s.sf).sort((a, b) => b[1] - a[1]);  // JS orders number-like keys numerically
+  add("Spreading factor", "SF" + sfs[0][0], sfs.length > 1 ? sfs.slice(1).map(([sf, n]) => "SF" + sf + " " + pctOf(n, s.heard)).join(", ")
+                                                           : "every uplink" + (s.adr ? ", ADR on" : ", ADR off"));
+  const [port, size] = [s.ports[0], s.sizes[0]];
+  add("Payload", size && size[0] != null ? size[0] + " bytes" : "–", port && port[0] != null ? "port " + port[0] +
+      (s.ports.length > 1 ? " (also " + s.ports.slice(1).map((p) => p[0]).join(", ") + ")" : "") : "no port");
+  add("ADR ack requests", s.adr_ack_req ? pctOf(s.adr_ack_req, s.heard) : "none",
+      !s.adr ? "ADR is off, so it never asks" : s.adr_ack_req ? fmt(s.adr_ack_req) + " uplinks asked whether the network still hears it"
+                                                                : "hears from the network often enough");
+  if (s.class_b) add("Class B", pctOf(s.class_b, s.heard), "uplinks sent in class B (listening at scheduled times)");
+  add("Last heard", when(s.last), "first " + when(s.first));
+  return host;
+}
+function attachTip(svg, fill) {  // hover and focus tooltips for the .hit areas of a chart (data-i: the bucket)
+  const show = (target) => {
+    const cardEl = svg.closest(".card");
+    let tip = cardEl.querySelector(":scope > .tip");
+    if (!tip) { tip = el("div", { class: "tip", hidden: "" }); cardEl.append(tip); }
+    const i = +target.dataset.i, content = fill(i);
+    tip.replaceChildren(el("div", { class: "tip-title", text: content.title }), ...content.rows.map(([cls, value, label]) =>
+      el("div", { class: "tip-row" }, cls ? el("span", { class: "key " + cls, "aria-hidden": "true" }) : null,
+         el("strong", { text: value }), el("span", { class: "label", text: label }))));
+    tip.hidden = false;
+    const box = cardEl.getBoundingClientRect(), r = target.getBoundingClientRect();
+    let left = r.right - box.left + 8;
+    if (left + tip.offsetWidth > box.width - 8) left = r.left - box.left - tip.offsetWidth - 8;
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, r.top - box.top) + "px";
+    svg.querySelectorAll(".bar").forEach((b) => b.classList.toggle("dim", +b.dataset.i !== i));
+    const cross = svg.querySelector(".cross"), dot = svg.querySelector(".cross-dot");  // line charts
+    if (cross) {
+      const cx = +target.getAttribute("x") + +target.getAttribute("width") / 2;
+      cross.setAttribute("x1", cx);
+      cross.setAttribute("x2", cx);
+      cross.setAttribute("visibility", "visible");
+      dot.setAttribute("cx", cx);
+      dot.setAttribute("cy", target.dataset.y || 0);
+      dot.setAttribute("visibility", target.dataset.y ? "visible" : "hidden");
+    }
+  };
+  const hide = () => {
+    const tip = svg.closest(".card") && svg.closest(".card").querySelector(":scope > .tip");
+    if (tip) tip.hidden = true;
+    svg.querySelectorAll(".bar.dim").forEach((b) => b.classList.remove("dim"));
+    svg.querySelectorAll(".cross, .cross-dot").forEach((c) => c.setAttribute("visibility", "hidden"));
+  };
+  svg.addEventListener("pointerover", (e) => { const t = e.target.closest(".hit"); if (t) show(t); });
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("focusin", (e) => { const t = e.target.closest(".hit"); if (t) show(t); });
+  svg.addEventListener("focusout", hide);
+}
+function chartFrame(svg, H, m) {  // sizes an svg to its container; returns plot width and height
+  const W = Math.max(240, Math.floor(svg.parentElement.clientWidth));
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.replaceChildren();
+  return { W, pw: W - m.l - m.r, ph: H - m.t - m.b };
+}
+function yAxis(svg, ticks, y, m, W, label) {
+  for (const t of ticks) {
+    svg.append(svgEl("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), class: t === ticks[0] ? "axis" : "grid" }));
+    const text = svgEl("text", { x: m.l - 6, y: y(t) + 4, class: "tick", "text-anchor": "end" });
+    text.textContent = label(t);
+    svg.append(text);
+  }
+}
+function xAxis(svg, d, band, m, H) {  // bucket labels: hours (dates at midnight) or days, never crowded
+  const out = [];
+  if (d.hourly) {
+    const step = [1, 2, 3, 6, 12, 24].find((s) => s * band >= 34) || 24;
+    d.buckets.forEach((b, i) => {
+      const t = new Date(b.t), h = t.getHours();
+      if (h % step === 0) out.push([i, h === 0 ? t.toLocaleDateString([], { day: "numeric", month: "numeric" }) : pad(h)]);
+    });
+  } else {
+    const step = [1, 2, 5, 7, 14, 30, 61, 91].find((s) => s * band >= 48) || 91;
+    d.buckets.forEach((b, i) => { if (i % step === 0) out.push([i, new Date(b.t).toLocaleDateString([], { day: "numeric", month: "numeric" })]); });
+  }
+  for (const [i, label] of out) {
+    const t = svgEl("text", { x: m.l + (i + 0.5) * band, y: H - 6, class: "tick", "text-anchor": "middle" });
+    t.textContent = label;
+    svg.append(t);
+  }
+}
+function uplinksCard(d) {
+  const unit = d.hourly ? "hour" : "day";
+  const svg = svgEl("svg", { class: "chart", id: "dev-uplinks", role: "img",
+    "aria-label": "Uplinks heard and lost per " + unit + "; the numbers are in the table below the chart" });
+  attachTip(svg, (i) => {
+    const b = ex.data.device.buckets[i];
+    return { title: bucketLabel(b, ex.data.device.hourly), rows: [["c-heard", fmt(b.heard), "heard"], ["c-lost", fmt(b.lost), "lost"]] };
+  });
+  const table = el("table");
+  fillTable(table, [d.hourly ? "Hour" : "Day", "Heard", "Lost"],
+    d.buckets.filter((b) => b.heard || b.lost).map((b) => ({ cells: [bucketLabel(b, d.hourly), fmt(b.heard), fmt(b.lost)] })), new Set([1, 2]));
+  return el("section", { class: "card" }, el("h2", { text: "Uplinks per " + unit }),
+    el("div", { class: "legend" }, el("span", {}, el("span", { class: "swatch c-heard", "aria-hidden": "true" }), "Heard"),
+       el("span", {}, el("span", { class: "swatch c-lost", "aria-hidden": "true" }), "Lost: sent (by the frame counter), heard by no gateway")),
+    svg, details("Show the numbers", table));
+}
+function drawUplinks(svg, d) {
+  const H = 190, m = { l: 44, r: 8, t: 10, b: 24 };
+  const { W, pw, ph } = chartFrame(svg, H, m);
+  const B = d.buckets, band = pw / B.length, bw = Math.max(1, Math.min(18, band * 0.7));
+  const ticks = niceTicks(Math.max(0, ...B.map((b) => b.heard + b.lost)));
+  const top = ticks[ticks.length - 1], base = m.t + ph;
+  const y = (v) => base - (v / top) * ph;
+  yAxis(svg, ticks, y, m, W, compact);
+  B.forEach((b, i) => {
+    const x = m.l + i * band + (band - bw) / 2;
+    const hh = b.heard ? Math.max(1.5, (b.heard / top) * ph) : 0, lh = b.lost ? Math.max(1.5, (b.lost / top) * ph) : 0;
+    if (hh) svg.append(svgEl("path", { d: lh ? `M${x},${base}V${base - hh}H${x + bw}V${base}Z` : barPath(x, base - hh, bw, hh, 4),
+                                       class: "bar c-heard", "data-i": i }));
+    if (lh) svg.append(svgEl("path", { d: barPath(x, base - hh - (hh ? 2 : 0) - lh, bw, lh, 4), class: "bar c-lost", "data-i": i }));
+    svg.append(svgEl("rect", { x: m.l + i * band, y: m.t, width: band, height: ph, class: "hit", "data-i": i,
+                               tabindex: B.length <= 62 ? 0 : -1,
+                               "aria-label": bucketLabel(b, d.hourly) + ": " + b.heard + " heard, " + b.lost + " lost" }));
+  });
+  xAxis(svg, d, band, m, H);
+}
+function signalCard(d) {
+  const s = d.summary;
+  const gws = Object.keys(s.gateways).sort((a, b) => s.gateways[b].heard - s.gateways[a].heard);
+  const table = el("table");
+  fillTable(table, ["Gateway", "Heard", "Of all sent", "Median RSSI", "Best RSSI", "Median SNR"], gws.map((gid) => {
+    const g = s.gateways[gid];
+    return { cells: [gwCell(gid), fmt(g.heard), pctOf(g.heard, s.sent), dbm(g.rssi_median), dbm(g.rssi_max),
+                     g.snr_median == null ? "–" : g.snr_median.toFixed(1) + " dB"] };
+  }), new Set([1, 2, 3, 4, 5]));
+  return el("section", { class: "card" }, el("h2", { text: "Signal per gateway" }),
+    el("p", { class: "sub", text: "Median RSSI per " + (d.hourly ? "hour" : "day") + " of this device's uplinks, every gateway on the same scale." }),
+    el("div", { class: "panels", id: "dev-signal" }), el("div", { class: "tablewrap" }, table));
+}
+function drawSignal(host, d) {
+  const s = d.summary;
+  const gws = Object.keys(s.gateways).sort((a, b) => s.gateways[b].heard - s.gateways[a].heard);
+  const all = d.buckets.flatMap((b) => Object.values(b.rssi));
+  if (!all.length) return host.replaceChildren(el("p", { class: "muted", text: "No RSSI in this range." }));
+  let lo = Math.floor(Math.min(...all) / 10) * 10, hi = Math.ceil(Math.max(...all) / 10) * 10;
+  if (hi - lo < 20) lo = hi - 20;
+  if (host.dataset.key !== gws.join()) {
+    host.dataset.key = gws.join();
+    host.replaceChildren(...gws.map((gid) => {
+      const svg = svgEl("svg", { class: "chart", role: "img", "aria-label": "Median RSSI at " + (gwName(gid) || gid) +
+        " over time; the per-gateway numbers are in the table below" });
+      attachTip(svg, (i) => {
+        const b = ex.data.device.buckets[i], v = b.rssi[gid];
+        return { title: bucketLabel(b, ex.data.device.hourly), rows: [[null, v == null ? "not heard" : dbm(v), v == null ? "" : "median RSSI"]] };
+      });
+      return el("div", { class: "panel", "data-gw": gid },
+        el("div", { class: "panel-head" }, el("span", { class: "panel-title", text: gwName(gid) || gid }),
+           el("span", { class: "panel-total", text: "median " + dbm(s.gateways[gid].rssi_median) })), svg);
+    }));
+  }
+  for (const panel of host.children) drawLine(panel.querySelector("svg"), d, panel.dataset.gw, lo, hi);
+}
+function drawLine(svg, d, gid, lo, hi) {
+  const H = 150, m = { l: 44, r: 8, t: 8, b: 24 };
+  const { W, pw, ph } = chartFrame(svg, H, m);
+  const step = hi - lo > 60 ? 20 : 10, ticks = [];
+  for (let v = lo; v <= hi; v += step) ticks.push(v);
+  const y = (v) => m.t + ph - ((v - lo) / (hi - lo)) * ph;
+  yAxis(svg, ticks, y, m, W, String);
+  const B = d.buckets, band = pw / B.length, x = (i) => m.l + (i + 0.5) * band;
+  const vals = B.map((b) => (gid in b.rssi ? b.rssi[gid] : null));
+  let path = "";
+  vals.forEach((v, i) => { if (v != null) path += (vals[i - 1] != null ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); });
+  if (path) svg.append(svgEl("path", { d: path, class: "line" }));
+  vals.forEach((v, i) => {  // points with no neighbour would not show as a line
+    if (v != null && vals[i - 1] == null && vals[i + 1] == null) svg.append(svgEl("circle", { cx: x(i), cy: y(v), r: 4, class: "dot" }));
+  });
+  svg.append(svgEl("line", { class: "cross", x1: 0, x2: 0, y1: m.t, y2: m.t + ph, visibility: "hidden" }));
+  svg.append(svgEl("circle", { class: "dot cross-dot", cx: 0, cy: 0, r: 4, visibility: "hidden" }));
+  vals.forEach((v, i) => svg.append(svgEl("rect", { x: m.l + i * band, y: m.t, width: band, height: ph, class: "hit", "data-i": i,
+                                                    "data-y": v == null ? "" : y(v).toFixed(1) })));
+  xAxis(svg, d, band, m, H);
+}
+function batteryCard(d) {
+  const table = el("table");
+  fillTable(table, ["Time", "Battery", "Link margin"], [...d.battery].reverse().map((b) => ({
+    cells: [when(b.t), b.text, (b.margin > 0 ? "+" : "") + b.margin + " dB"] })), new Set([2]));
+  const svg = svgEl("svg", { class: "chart", id: "dev-battery", role: "img", "aria-label": "Battery level over time; the values are in the table below" });
+  attachTip(svg, (i) => {
+    const b = ex.data.device.battery[i];
+    return { title: when(b.t), rows: [[null, batteryShort(b), "battery"], [null, (b.margin > 0 ? "+" : "") + b.margin + " dB", "link margin"]] };
+  });
+  return el("section", { class: "card" }, el("h2", { text: "Battery" }),
+    el("p", { class: "sub", text: "From the device's DevStatusAns answers, sent when the network asks for them. Link margin: " +
+      "the signal-to-noise ratio of that request as the device received it." }), svg, details("Show the values", table));
+}
+function drawBattery(svg, d) {
+  const H = 160, m = { l: 44, r: 8, t: 10, b: 24 };
+  const { W, pw, ph } = chartFrame(svg, H, m);
+  const B = d.buckets, t0 = Date.parse(B[0].t);
+  const end = new Date(B[B.length - 1].t);
+  if (d.hourly) end.setHours(end.getHours() + 1); else end.setDate(end.getDate() + 1);
+  const x = (t) => m.l + ((t - t0) / (end - t0)) * pw, y = (v) => m.t + ph - (v / 100) * ph;
+  yAxis(svg, [0, 25, 50, 75, 100], y, m, W, (v) => v + " %");
+  const pts = d.battery.map((b, i) => ({ i, b, level: b.value >= 1 && b.value <= 254 ? ((b.value - 1) * 100) / 253 : null }))
+    .filter((p) => p.level != null);
+  if (pts.length > 1) svg.append(svgEl("path", { class: "line", d: pts.map((p, k) => (k ? "L" : "M") + x(Date.parse(p.b.t)).toFixed(1) + "," + y(p.level).toFixed(1)).join("") }));
+  for (const p of pts) {
+    const cx = x(Date.parse(p.b.t)), cy = y(p.level);
+    svg.append(svgEl("circle", { cx, cy, r: 4, class: "dot" }));
+    svg.append(svgEl("circle", { cx, cy, r: 10, class: "hit", "data-i": p.i, tabindex: pts.length <= 40 ? 0 : -1,
+                                 "aria-label": when(p.b.t) + ": " + p.b.text }));
+  }
+  xAxis(svg, d, pw / B.length, m, H);
+}
+function macCard(d) {
+  const s = d.summary;
+  const counts = s ? Object.entries(s.mac).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + " " + fmt(n)).join(", ") : "";
+  const sub = "MAC commands travel in the frame header, unencrypted in LoRaWAN 1.0.x (1.1 devices encrypt them, and these decodes " +
+    "then mean nothing). ↑ from the device, ↓ from the network (overheard downlinks)." + (counts ? " From the device: " + counts + "." : "") +
+    (d.mac_total > d.mac.length ? " The latest " + fmt(d.mac.length) + " of " + fmt(d.mac_total) + "." : "");
+  if (!d.mac.length) return card("MAC commands", null, null, el("p", { class: "muted", text: "None in this range." }));
+  const table = el("table");
+  fillTable(table, ["Time", "", "FCnt", "Command", "Meaning", ""], d.mac.map((c) => ({ cells: [
+    when(c.t), c.dir === "up" ? "↑ device" : "↓ network", fmt(c.fcnt), c.name, el("span", { class: "wrap", text: c.text }), inspect(c.day, c.key)] })),
+    new Set([2]));
+  return card("MAC commands", null, sub, el("div", { class: "tablewrap" }, table));
+}
+function flagsText(p) {
+  return [p.confirmed && "confirmed", p.adr && "ADR", p.adr_ack_req && "ADRACKReq", p.ack && "ACK", p.class_b && "class B",
+          p.sent > 1 && "sent " + p.sent + "×"].filter(Boolean).join(", ") || "–";
+}
+function packetsCard(d) {
+  const table = el("table");
+  fillTable(table, ["Time", "FCnt", "Port", "Bytes", "SF", "Channel", "Flags", "MAC commands", "Heard by (RSSI)", ""],
+    d.packets.map((p) => ({ cells: [when(p.t), fmt(p.fcnt), p.port == null ? "–" : String(p.port), p.size == null ? "–" : String(p.size),
+      "SF" + p.sf, mhz(p.freq), flagsText(p), p.mac.join(", ") || "–",
+      p.gateways.map(([gid, , rssi]) => gwShort(gid) + " " + (rssi == null ? "?" : Math.round(rssi))).join(", "), inspect(p.day, p.key)] })),
+    new Set([1, 2, 3]));
+  const csv = "/api/device/" + d.dev_addr + "/uplinks.csv?from=" + ex.from + "&to=" + ex.to;
+  return el("section", { class: "card" },
+    el("div", { class: "card-head" }, el("h2", { text: "Uplinks" }), el("span", { class: "actions" },
+      el("a", { class: "btn", href: csv + (excelLocale ? "&excel=1" : ""), text: "Download CSV" }),
+      el("a", { href: excelLocale ? csv : csv + "&excel=1", text: excelLocale ? "plain CSV (for scripts)" : "CSV for Excel" }))),
+    el("p", { class: "sub", text: (d.packets_total > d.packets.length ? "The latest " + fmt(d.packets.length) + " of " + fmt(d.packets_total)
+                                                                    : fmt(d.packets_total) + " uplinks") +
+      ", newest first; the CSV has every uplink from " + ex.from + " to " + ex.to + ", with the signal at each gateway. Inspect " +
+      "shows every byte and every reception. ADRACKReq: no downlink for a long while, so the device asks whether the network " +
+      "still hears it." }),
+    el("div", { class: "tablewrap" }, table));
+}
+function downlinksCard(d) {
+  const table = el("table");
+  fillTable(table, ["Time", "FCnt", "Port", "Bytes", "SF", "Channel", "Flags", "MAC commands", "Heard by (RSSI)", ""],
+    d.downlinks.map((p) => ({ cells: [when(p.t), fmt(p.fcnt), p.port == null ? "–" : String(p.port), p.size == null ? "–" : String(p.size),
+      p.sf ? "SF" + p.sf : "–", mhz(p.freq),
+      [p.confirmed && "confirmed", p.ack && "ACK", p.pending && "FPending"].filter(Boolean).join(", ") || "–",
+      p.mac.join(", ") || "–", p.gateways.map(([gid, rssi]) => gwShort(gid) + " " + (rssi == null ? "?" : Math.round(rssi))).join(", "),
+      inspect(p.day, p.key)] })), new Set([1, 2, 3]));
+  return card("Overheard downlinks", null, "Downlinks to this DevAddr that a gateway picked up: another gateway transmitting, or a " +
+    "network giving the same address to one of its devices. FPending: the network has more queued for the device." + (d.downlinks_total > d.downlinks.length ? " The latest " +
+    d.downlinks.length + " of " + fmt(d.downlinks_total) + "." : ""), el("div", { class: "tablewrap" }, table));
+}
+
+// ------------------------------------------------------------- packet
+async function loadPacket(seq) {
+  const r = ex.route, host = $("ex-body");
+  host.replaceChildren(el("p", { class: "muted", text: "Loading the packet…" }));
+  try {
+    const p = await fetchJSON("/api/frame/" + r.day + "/" + r.key);
+    if (seq !== ex.seq) return;
+    ex.data.packet = p;
+    renderPacketPage();
+  } catch (e) {
+    if (seq !== ex.seq) return;
+    host.replaceChildren(el("a", { class: "back", href: "#devices/" + r.day + "/" + r.day, text: "← All devices on " + r.day }),
+      el("p", { class: e.status === 404 ? "muted" : "err", text: e.status === 404 ? "No such packet on " + r.day + "." : "Could not load: " + e.message }));
+  }
+}
+function asText(hex, xor) {  // printable bytes as characters, the rest as dots
+  let out = "";
+  for (let i = 0; i < hex.length; i += 2) {
+    const c = parseInt(hex.slice(i, i + 2), 16) ^ (xor ? 0x85 : 0);
+    out += c >= 32 && c < 127 ? String.fromCharCode(c) : "·";
+  }
+  return out;
+}
+function renderPacketPage() {
+  const p = ex.data.packet, host = $("ex-body");
+  const first = p.receptions[0];
+  const back = el("div", { class: "toolbar" });
+  if (p.dev_addr) back.append(el("a", { href: deviceHref(p.dev_addr, p.day, p.day) }, "← ", devLabel(p.dev_addr), " on " + p.day));
+  back.append(el("a", { href: "#devices/" + p.day + "/" + p.day, text: (p.dev_addr ? "" : "← ") + "All devices on " + p.day }));
+  const kind = p.lorawan ? "LoRaWAN " + p.mtype + (p.is_downlink ? " (an overheard downlink)" : "") : "not LoRaWAN";
+  const parts = [back, el("h2", { class: "big", text: "Packet, " + p.length + " bytes" }),
+    el("p", { class: "sub", text: kind + ", first received " + stamp(first.t) + " on " + mhz(first.freq) + " MHz" +
+      (first.sf ? ", SF" + first.sf : "") + ", by " + p.receptions.length + (p.receptions.length === 1 ? " gateway" : " gateways") + "." })];
+  for (const note of p.notes) parts.push(el("div", { class: "notice" }, el("span", { class: "icon", "aria-hidden": "true", text: "i" }), note));
+
+  const boxes = el("div", { class: "bytes" }, ...p.fields.map((f) => el("div", { class: "field", title: f.text },
+    el("div", { class: "hex mono", text: spaced(f.hex) }), el("div", { class: "fname", text: f.name }))));
+  const fields = el("table");
+  fillTable(fields, ["Field", "Offset", "Bytes", "Hex", "Meaning"], p.fields.map((f) => ({ cells: [f.name, String(f.offset), String(f.hex.length / 2),
+    el("span", { class: "mono", text: spaced(f.hex.length > 32 ? f.hex.slice(0, 32) : f.hex) + (f.hex.length > 32 ? " …" : "") }),
+    el("span", { class: "wrap", text: f.text })] })), new Set([1, 2]));
+  const raw = [el("div", { class: "mono rawhex", text: spaced(p.hex) })];
+  if (!p.lorawan) {
+    raw.push(el("dl", { class: "kv" }, el("dt", { text: "As text" }), el("dd", { class: "mono", text: asText(p.hex, false) }),
+      el("dt", { text: "After XOR 0x85" }), el("dd", { class: "mono", text: asText(p.hex, true) })));
+  }
+  parts.push(card("Bytes", null, p.lorawan ? "Every field of the frame. Point at one for its meaning." :
+    "Read as if it were LoRaWAN, which it is not; the text views below show what the bytes may say.",
+    boxes, el("div", { class: "tablewrap" }, fields), el("h2", { text: "Raw", style: "margin-top:12px" }), ...raw));
+  if (p.mac.length) {
+    const mac = el("table");
+    fillTable(mac, ["Command", "Bytes", "Meaning"], p.mac.map((c) => ({ cells: [c.name, el("span", { class: "mono", text: spaced(c.hex) }),
+      el("span", { class: "wrap", text: c.text })] })), new Set());
+    parts.push(card("MAC commands", null, "In FOpts, unencrypted in LoRaWAN 1.0.x.", el("div", { class: "tablewrap" }, mac)));
+  }
+  const rec = el("table");
+  fillTable(rec, ["Gateway", "Received", "Channel", "SF / BW", "Code rate", "RSSI", "SNR", "CRC"], p.receptions.map((r) => ({ cells: [
+    gwCell(r.gateway), stamp(r.t), mhz(r.freq) + " MHz", r.sf ? "SF" + r.sf + " / " + r.bw / 1000 + " kHz" : "FSK",
+    CODE_RATES[r.cr] || "–", dbm(r.rssi), r.snr == null ? "–" : r.snr.toFixed(1) + " dB", r.crc || "–"] })), new Set([5, 6]));
+  parts.push(card("Receptions", null, "Every gateway that received these exact bytes on " + p.day + " (a repeated transmission shows twice).",
+    el("div", { class: "tablewrap" }, rec)));
+  host.replaceChildren(...parts);
+}
+
+// ------------------------------------------------------------- health
+const hv = { now: null, days: null };
+function openHealth() {
+  showView("health");
+  const origin = location.origin;
+  $("health-snippet").textContent = [
+    "rest:",
+    "  - resource: " + origin + "/api/health",
+    "    scan_interval: 60",
+    "    binary_sensor:",
+    "      - name: LoRaWAN capture",
+    "        device_class: problem",
+    "        value_template: \"{{ not value_json.ok }}\"",
+    "      - name: LoRaWAN capture warnings",
+    "        device_class: problem",
+    "        value_template: \"{{ value_json.warnings | count > 0 }}\"",
+    "    sensor:",
+    "      - name: LoRaWAN capture issues",
+    "        value_template: \"{{ (value_json.problems + value_json.warnings) | join('; ') | truncate(250) }}\""].join("\n");
+  loadHealthNow();
+  loadHealthDays();
+}
+async function loadHealthNow() {
+  try {
+    hv.now = await fetchJSON("/api/health");
+    renderHealthNow();
+  } catch (e) {
+    $("health-now").replaceChildren(el("p", { class: "err", text: "Could not load: " + e.message }));
+  }
+}
+async function loadHealthDays() {
+  $("health-days-note").textContent = "Loading…";
+  try {
+    hv.days = await fetchJSON("/api/health/days?days=14");
+    $("health-days-note").textContent = "";
+    renderHealthDays();
+  } catch (e) {
+    $("health-days-note").textContent = "Could not load: " + e.message;
+  }
+}
+function checkTable(rows) {
+  const table = el("table", { class: "checks" });
+  fillTable(table, ["", ""], rows.map(([kind, name, text]) => ({ cells: [statusBadge(kind, name), text] })), new Set());
+  table.querySelector("thead").remove();
+  return el("div", { class: "tablewrap" }, table);
+}
+function renderHealthNow() {
+  const h = hv.now;
+  $("health-checked").textContent = "checked " + clock(h.checked);
+  const parts = [checkTable(h.items.map((i) => [i.state, i.name, i.text]))];
+  if (h.gateways.length) parts.push(el("div", { class: "subhead", text: "Gateways" }),
+    checkTable(h.gateways.map((g) => [g.state, g.name, g.text])));
+  if (h.own.length) parts.push(el("div", { class: "subhead", text: "Own devices" }),
+    checkTable(h.own.map((o) => [o.state, o.name === o.dev_addr ? o.dev_addr : o.name + " " + o.dev_addr, o.text])));
+  parts.push(el("div", { class: "subhead", text: "Channels" }), h.channels.length
+    ? checkTable(h.channels.map((c) => ["warning", mhz(c.freq) + " MHz", c.text.replace(/^[\d.]+ MHz: /, "")]))
+    : el("p", { class: "muted", text: "No channel was busy with packets that are not LoRaWAN in the last hour (5 % or more)." }));
+  $("health-now").replaceChildren(...parts);
+}
+function renderHealthDays() {
+  const days = hv.days.days, table = $("health-days");
+  if (!days.length) return table.replaceChildren();
+  const gws = [...new Set(days.flatMap((d) => Object.keys(d.gateways || {})))]
+    .sort((a, b) => (gwName(a) || a).localeCompare(gwName(b) || b));
+  const time = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const short = (iso) => new Date(iso).toLocaleString([], { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+  const rows = days.map((d) => {
+    if (!d.file) return { cells: [d.day, statusBadge("critical", "nothing recorded"), "", ...gws.map(() => ""), ""] };
+    const covers = d.first ? time(d.first) + " – " + (d.today ? "now" : time(d.last)) : "no packets";
+    let gaps = "–";
+    if (d.reports_known) {
+      gaps = d.gaps.length ? statusBadge("warning", d.gaps.length + (d.gaps.length === 1 ? " gap, " : " gaps, ") + dur(d.gap_s))
+                           : statusBadge("good", "none");
+      if (d.gaps.length) gaps.title = d.gaps.map(([a, b]) => short(a) + " – " + short(b)).join("\n");
+    }
+    const stored = gws.map((g) => {  // up: sending its reports; stored: of the packets it reported
+      const x = d.gateways[g];
+      if (!x) return "";
+      const up = x.uptime && x.uptime.pct != null ? x.uptime.pct : null, share = x.reported ? x.stored / x.reported : null;
+      const parts = [up == null ? "" : upText(up) + " up",
+                     share == null ? "" : (share >= 0.9995 ? "100" : (100 * share).toFixed(1)) + " % stored" +
+                       (x.skipped ? ", " + x.skipped + (x.skipped === 1 ? " report" : " reports") + " missed" : "")].filter(Boolean);
+      if (!parts.length) return x.reports ? "–" : "";
+      return (up != null && up < 99) || (share != null && share < 0.99) ? statusBadge("warning", parts.join(" · ")) : parts.join(" · ");
+    });
+    const own = Object.entries(d.own || {}).map(([dev, o]) => (devName(dev) || dev) + " " + fmt(o.heard) + "/" + fmt(o.expected) +
+      (o.unrecorded ? " (+" + fmt(o.unrecorded) + " unrecorded)" : "")).join(", ");
+    return { cells: [d.day + (d.today ? " (today)" : ""), covers, gaps, ...stored, own || "–"] };
+  });
+  fillTable(table, ["Day", "Recorded", "Nothing recorded", ...gws.map((g) => gwName(g) || g), "Own devices heard / sent"],
+            rows, new Set());
+}
+
+// ----------------------------------------------------------- data flow
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(url + ": HTTP " + r.status);
+  return r.json();
+}
+async function refreshStatus() {
+  try {
+    state.status = await getJSON("/api/status");
+    statusAt = performance.now();
+  } catch (e) { state.status = null; }
+  renderStatus();
+}
+async function refreshDays() {
+  try { state.days = await getJSON("/api/days"); renderDays(); } catch (e) { /* keep the last list */ }
+}
+async function refreshDay() {
+  if (!state.day) return;
+  const day = state.day;
+  $("content").classList.add("loading");  // keep the old render, dimmed, until the new one is in
+  try {
+    const summary = await getJSON("/api/day/" + day);
+    if (day === state.day) { state.summary = summary; if (!$("view-overview").hidden) renderDay(); }
+  } catch (e) { /* keep the last render */ }
+  finally { $("content").classList.remove("loading"); }
+}
+
+$("day").addEventListener("change", (e) => selectDay(e.target.value));
+for (const id of ["bulk-from", "bulk-to"]) $(id).addEventListener("change", renderBulk);
+window.addEventListener("hashchange", route);  // tabs, links, bookmarks, back/forward
+$("own-add").addEventListener("click", () => {
+  const box = $("own-form");
+  if (!box.hidden) return box.querySelector("input").focus();  // already open: keep what is typed
+  state.ownEdit = "new";
+  box.hidden = false;
+  box.replaceChildren(ownForm(null, async (changed) => {
+    box.hidden = true;
+    box.replaceChildren();
+    state.ownEdit = null;
+    if (changed) await ownChanged();
+  }));
+});
+$("ex-range").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-days]");
+  if (!b) return;
+  const today = todayDay(), days = b.dataset.days;
+  goRange(days === "all" ? (firstDay() < today ? firstDay() : today) : dayShift(today, 1 - +days), today);
+});
+for (const id of ["ex-from", "ex-to"]) {
+  $(id).addEventListener("change", () => { if ($("ex-from").value && $("ex-to").value) goRange($("ex-from").value, $("ex-to").value); });
+}
+$("ex-reload").addEventListener("click", () => ex.route && openExplorer(ex.route));
+$("health-reload").addEventListener("click", () => { loadHealthNow(); loadHealthDays(); });
+const occChart = $("occ-chart");
+occChart.addEventListener("pointerover", (e) => { const t = e.target.closest(".cell"); if (t) showOccTip(t); });
+occChart.addEventListener("pointerleave", () => { $("occ-tip").hidden = true; });
+const panels = $("panels");
+panels.addEventListener("pointerover", (e) => { const t = e.target.closest(".hit"); if (t) showTip(+t.dataset.hour, t); });
+panels.addEventListener("pointerleave", hideTip);
+panels.addEventListener("focusin", (e) => { const t = e.target.closest(".hit"); if (t) showTip(+t.dataset.hour, t); });
+panels.addEventListener("focusout", hideTip);
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (!$("view-overview").hidden && state.summary) { renderCharts(state.summary); renderOccupancy(state.summary); }
+    if (!$("view-explorer").hidden && ex.route && ex.route.page === "device") drawDevice();
+    if (!$("view-explorer").hidden && ex.route && ex.route.page === "devices") drawOther();
+  }, 150);
+});
+
+(async function start() {
+  if (/^#\d{4}-\d{2}-\d{2}$/.test(location.hash)) state.day = location.hash.slice(1);
+  await refreshStatus();
+  await refreshDays();
+  route();
+  setInterval(refreshStatus, 5000);
+  setInterval(tick, 1000);
+  setInterval(() => { if (!$("view-health").hidden) loadHealthNow(); }, 10000);
+  setInterval(async () => {
+    await refreshDays();
+    if (!$("view-overview").hidden && state.days.some((d) => d.day === state.day && d.today)) refreshDay();
+  }, 60000);
+})();
+</script>
+</body>
+</html>

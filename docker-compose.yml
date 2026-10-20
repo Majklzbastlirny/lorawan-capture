@@ -1,0 +1,28 @@
+# LoRaWAN capture: ChirpStack gateway MQTT -> one SQLite file per day + web UI.
+#
+# For Unraid's Compose Manager. Assumes this folder was copied to
+# /mnt/user/appdata/lorawan-capture and .env.example copied to .env there and filled in.
+# Put it elsewhere? Change the three /mnt/user/appdata/lorawan-capture paths below.
+services:
+  lorawan-capture:
+    build: /mnt/user/appdata/lorawan-capture
+    image: lorawan-capture:local
+    pull_policy: build              # every "Compose Up" rebuilds from the folder: code updates apply.
+                                    # If an older Compose rejects this line, delete it and update with
+                                    # docker compose -f <this file> up -d --build
+    container_name: lorawan-capture
+    restart: unless-stopped
+    env_file: /mnt/user/appdata/lorawan-capture/.env
+    environment:
+      TZ: Europe/Prague             # also the day boundary: one file per local day
+      PUID: "99"                    # nobody
+      PGID: "100"                   # users
+    ports:
+      - "8088:8080"                 # web UI: http://<unraid-ip>:8088
+    volumes:
+      - /mnt/user/appdata/lorawan-capture/data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
