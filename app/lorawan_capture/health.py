@@ -129,7 +129,11 @@ def check(capture: Capture, cfg: Config, full: bool = False) -> dict:
         gateways.append({"id": gid, "name": name, "state": state, "text": text, "last": last.isoformat() if last else None})
 
     own = []
-    for dev, entry in capture.own_devices.snapshot().items():
+    for eui, follow in capture.own_devices.following().items():
+        if follow["dev_addr"] is None:
+            own.append({"dev_addr": None, "dev_eui": eui, "name": follow["name"] or eui, "state": "info", "last": None,
+                        "text": "followed by its DevEUI: its address is taken over at its next join"})
+    for dev, entry in capture.own_devices.current().items():  # not the addresses a device has left behind
         name = entry.get("name") or dev
         seen = capture.own_last(dev)
         if seen is PENDING:

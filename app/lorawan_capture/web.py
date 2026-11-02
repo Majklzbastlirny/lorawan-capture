@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import __version__, explorer, health, store
 from .capture import Capture
 from .config import Config
-from .devices import normalize
+from .devices import normalize, normalize_eui
 
 log = logging.getLogger(__name__)
 
@@ -190,10 +190,19 @@ class Handler(BaseHTTPRequestHandler):
                 name = body.get("name") if isinstance(body, dict) else None
                 if name is not None and not isinstance(name, str):
                     raise ValueError("the name must be text")
+                dev_eui = body.get("dev_eui") if isinstance(body, dict) else None
+                if dev_eui is not None and not isinstance(dev_eui, str):
+                    raise ValueError("the DevEUI must be text")
                 if gateway:
                     result = self.capture.registry.rename(unquote(gateway.group(1)), name)
-                else:  # add an own device, or rename it
-                    result = self.capture.own_devices.put(unquote(device.group(1)), name)
+                else:  # an own device: add, rename or link it to a DevEUI; or follow a device by its DevEUI
+                    target = unquote(device.group(1))
+                    try:
+                        eui = normalize_eui(target)
+                    except ValueError:
+                        result = self.capture.own_devices.put(target, name, dev_eui)
+                    else:
+                        result = self.capture.own_devices.follow_device(eui, name, self.capture.node_history(eui))
             except ValueError as err:
                 return self._text(HTTPStatus.BAD_REQUEST, str(err))
             self._json(result)
@@ -219,13 +228,18 @@ class Handler(BaseHTTPRequestHandler):
             device = OWN_API.match(path)
             if not device:
                 return self._text(HTTPStatus.NOT_FOUND, "not found")
+            target = unquote(device.group(1))
             try:
-                addr = normalize(unquote(device.group(1)))
+                try:
+                    key = {"dev_eui": normalize_eui(target)}
+                except ValueError:
+                    key = {"dev_addr": normalize(target)}
+                removed = self.capture.own_devices.remove(target)
             except ValueError as err:
                 return self._text(HTTPStatus.BAD_REQUEST, str(err))
-            if not self.capture.own_devices.remove(addr):
+            if not removed:
                 return self._text(HTTPStatus.NOT_FOUND, "not an own device")
-            self._json({"dev_addr": addr, "removed": True})
+            self._json({**key, "removed": True})
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:  # noqa: BLE001

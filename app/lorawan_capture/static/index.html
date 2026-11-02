@@ -245,11 +245,13 @@ input[type="date"] { font: inherit; color: var(--ink); background: var(--surface
         </div>
         <p class="sub">Share of each device's uplinks (counted from its frame counter, leaving out times nothing
           was recorded) that reached each gateway.
-          Devices are known by their DevAddr, the only identity the gateways see; a device that joins again (OTAA)
-          gets a new one, so add that then. Names and the list are kept in <span class="mono">devices.json</span>.</p>
+          The gateways only see a device's DevAddr, and an OTAA device gets a new one every time it joins. Add a
+          device by its DevEUI (or give an address its DevEUI) and it is followed: when it joins again, the address
+          its join leads to is taken over, with the same name. Kept in <span class="mono">devices.json</span>.</p>
         <div id="own-form" class="toolbar" hidden></div>
-        <p id="own-empty" class="muted" hidden>No own devices yet: add one with its DevAddr (e.g. from ChirpStack,
-          or from the Devices tab).</p>
+        <p id="own-note" class="sub" hidden></p>
+        <p id="own-empty" class="muted" hidden>No own devices yet: add one with its DevEUI or DevAddr (e.g. from
+          ChirpStack, or from the Devices tab).</p>
         <div class="tablewrap"><table id="own-table"></table></div>
       </section>
 
@@ -906,22 +908,36 @@ async function ownChanged() {  // after an add, rename or remove: names and numb
   else if (ex.route && ex.route.page === "device") { if (ex.data.device) renderDevicePage(); else openExplorer(ex.route); }
   else if (ex.route && ex.route.page === "devices" && ex.data.devices) renderDeviceRows();
 }
-function ownForm(addr, done) {  // name an own device; with no addr, also asks for one (adding a device)
-  const addrInput = addr ? null : el("input", { type: "text", class: "mono", maxlength: "16", placeholder: "DevAddr, e.g. 00a1b2c3",
-                                                "aria-label": "DevAddr of the device" });
+function ownForm(addr, done) {  // name an own device and give it a DevEUI; with no addr, adds one by DevAddr or DevEUI
+  const entry = (addr && ownDevices()[addr]) || {};
+  const addrInput = addr ? null : el("input", { type: "text", class: "mono", maxlength: "24", placeholder: "DevEUI or DevAddr",
+                                                "aria-label": "DevEUI (16 hex digits) or DevAddr (8) of the device" });
   const name = el("input", { type: "text", maxlength: "40", placeholder: "name (optional)", value: devName(addr) || "",
                              "aria-label": "Name of the device" });
+  const euiInput = addr ? el("input", { type: "text", class: "mono", maxlength: "24", placeholder: "DevEUI to follow (optional)",
+                                        value: entry.dev_eui || "", "aria-label": "DevEUI: follow the device when it joins again" }) : null;
   const save = el("button", { class: "btn", type: "button", text: addr && isOwn(addr) ? "Save" : "Add" });
   const cancel = el("button", { class: "linkish", type: "button", text: "Cancel" });
   const error = el("span", { class: "error", role: "status" });
   const submit = async () => {
     const target = addr || addrInput.value.trim();
-    if (!target) { error.textContent = "enter the DevAddr"; return; }
+    if (!target) { error.textContent = "enter the DevEUI or DevAddr"; return; }
+    const body = { name: name.value };
+    if (euiInput) body.dev_eui = euiInput.value.trim();  // empty: no longer followed
     save.disabled = true;
     try {
       const r = await fetch("/api/own/" + encodeURIComponent(target), {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.value }) });
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!r.ok) throw new Error(await r.text());
+      const result = await r.json();
+      if (result.addresses !== undefined) {  // followed by its DevEUI: say what the recordings told
+        const who = result.name || result.dev_eui;
+        state.ownNote = result.dev_addr
+          ? "Following " + who + ": now " + result.dev_addr + (result.addresses.length > 1
+              ? " (earlier " + result.addresses.slice(0, -1).join(", ") + ")" : "") + ", found from its join requests."
+          : "Following " + who + ": no join request from it in the last 31 days of recordings. Its address is taken over at " +
+            "its next join; to count it now, also add its current DevAddr with this DevEUI.";
+      }
       await done(true);
     } catch (e) {
       error.textContent = e.message;
@@ -930,11 +946,11 @@ function ownForm(addr, done) {  // name an own device; with no addr, also asks f
   };
   save.addEventListener("click", submit);
   cancel.addEventListener("click", () => done(false));
-  for (const input of [addrInput, name]) {
+  for (const input of [addrInput, name, euiInput]) {
     if (input) input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); else if (e.key === "Escape") done(false); });
   }
   setTimeout(() => { (addrInput || name).focus(); if (!addrInput) name.select(); }, 0);
-  return el("span", { class: "rename" }, addrInput, name, save, cancel, error);
+  return el("span", { class: "rename" }, addrInput, name, euiInput, save, cancel, error);
 }
 function removeConfirm(addr, done) {
   const yes = el("button", { class: "btn", type: "button", text: "Remove" });
@@ -957,12 +973,18 @@ function removeConfirm(addr, done) {
 }
 function renderOwn(s) {
   if (state.ownEdit) return;  // a refresh must not wipe an open editor
-  const devs = Object.keys(ownDevices()).sort((a, b) => (devName(a) || "~" + a).localeCompare(devName(b) || "~" + b));
+  const all = ownDevices(), following = (state.status && state.status.following) || {};
+  // addresses a device has left behind (it joined again) only on days they were in use
+  const devs = Object.keys(all).filter((dev) => !all[dev].until || (s.own || {})[dev])
+    .sort((a, b) => (devName(a) || "~" + a).localeCompare(devName(b) || "~" + b) || (all[a].added || "").localeCompare(all[b].added || ""));
   const gws = Object.keys(s.gateways).sort((a, b) => s.gateways[b].frames - s.gateways[a].frames);
   const rows = devs.map((dev) => {
     const o = (s.own || {})[dev];
     const per = gws.map((g) => (o ? Math.round((100 * (o.gateways[g] || 0)) / o.expected) + " % (" + fmt(o.gateways[g] || 0) + ")" : ""));
-    const link = el("a", { href: "#device/" + dev + "/" + s.day + "/" + s.day, title: "Details in the Devices tab" }, devLabel(dev));
+    const e = all[dev];
+    const link = el("span", {}, el("a", { href: "#device/" + dev + "/" + s.day + "/" + s.day, title: "Details in the Devices tab" }, devLabel(dev)),
+      e.dev_eui ? el("span", { class: "muted", title: "DevEUI " + e.dev_eui,
+                               text: e.until ? " · until " + when(e.until) : " · follows its DevEUI" }) : null);
     const rename = el("button", { class: "linkish", type: "button", text: devName(dev) ? "Rename" : "Name it" });
     const remove = el("button", { class: "linkish", type: "button", text: "Remove" });
     rename.addEventListener("click", () => editOwn(dev, "rename"));
@@ -970,8 +992,18 @@ function renderOwn(s) {
     return { id: dev, cells: [link, ...(o ? [fmt(o.expected), fmt(o.heard), fmt(o.expected - o.heard)] : ["no uplinks", "", ""]),
                               ...per, el("span", { class: "actions" }, rename, "·", remove)] };
   });
-  $("own-empty").hidden = devs.length > 0;
-  $("own-table").hidden = !devs.length;
+  for (const [eui, f] of Object.entries(following)) {
+    if (f.dev_addr) continue;
+    const remove = el("button", { class: "linkish", type: "button", text: "Remove" });
+    remove.addEventListener("click", () => editOwn("eui:" + eui, "remove"));
+    rows.push({ id: "eui:" + eui, cells: [el("span", {}, (f.name ? f.name + " " : ""), el("span", { class: "mono muted", text: eui })),
+                                          "waiting for its next join", "", "", ...gws.map(() => ""), el("span", { class: "actions" }, remove)] });
+  }
+  const note = $("own-note");
+  note.hidden = !state.ownNote;
+  note.textContent = state.ownNote || "";
+  $("own-empty").hidden = rows.length > 0;
+  $("own-table").hidden = !rows.length;
   fillTable($("own-table"), ["Device", "Sent", "Heard", "Lost by all", ...gws.map((g) => gwName(g) || g), ""],
             rows, new Set([1, 2, 3, ...gws.map((_, i) => i + 4)]));
 }
@@ -985,7 +1017,7 @@ function editOwn(dev, mode) {
     else if (state.summary) renderOwn(state.summary);
   };
   if (mode === "rename") row.cells[0].replaceChildren(ownForm(dev, done));
-  else row.cells[row.cells.length - 1].replaceChildren(removeConfirm(dev, done));
+  else row.cells[row.cells.length - 1].replaceChildren(removeConfirm(dev.replace(/^eui:/, ""), done));
 }
 // ------------------------------------------------------- channel occupancy
 const OCC_BINS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2];  // most channels stay under 2 %, a flood takes 40 %

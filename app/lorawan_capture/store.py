@@ -99,6 +99,8 @@ CLASS_SQL = ("CASE WHEN crc IS NOT NULL AND crc != 'CRC_OK' THEN 'bad_crc' "
 CLASSES = ("lorawan", "other", "sf5", "bad_crc")
 SUMMARY_FORMAT = 8  # bump when summarize() changes, so cached summaries are rebuilt
 SILENCE_S = 300  # no gateway stats report for this long: nothing was being recorded
+REJOIN_WINDOW_S = 120  # a device that joined sends its first uplink this soon after the join request,
+REJOIN_FCNT = 3  # with a frame counter this low (a new session starts at 0 or 1; one may be lost)
 REPORT_SLACK = 1.5  # reports this many intervals apart: one or more in between were missed
 DOWN_AFTER = 2.5  # a gateway's reports this many intervals apart: two or more missed, it was down
 
@@ -413,6 +415,30 @@ def summarize(conn: sqlite3.Connection, day: date, tz: ZoneInfo,
                       for gw, per_freq in airtimes.items()},
         "hour_seconds": hour_seconds(day, tz),
     }
+
+
+FIRST_UPLINK = ("SELECT dev_addr, ts_utc FROM frames WHERE ts_utc > ? AND ts_utc <= ? AND dev_addr IS NOT NULL "
+                "AND is_downlink = 0 AND major = 0 AND mtype IN ('UnconfirmedDataUp', 'ConfirmedDataUp') "
+                "AND fcnt <= ? AND (crc = 'CRC_OK' OR crc IS NULL) ORDER BY ts_utc LIMIT 1")
+
+
+def sessions(run, dev_eui: str) -> list[tuple[str, str]]:
+    """(first uplink, DevAddr) of each session of a device in one daily file, run(sql, params)
+    reading it. The gateways only see the DevEUI in join requests; the address the network
+    gives is encrypted. So: after each join request of the device, the first uplink within
+    REJOIN_WINDOW_S that has a new session's frame counter and comes from an address not
+    heard before."""
+    found: dict[str, str] = {}
+    for (ts,) in list(run("SELECT DISTINCT ts_utc FROM frames WHERE mtype = 'JoinRequest' AND dev_eui = ? "
+                          "ORDER BY ts_utc", (dev_eui,))):
+        until = (datetime.fromisoformat(ts) + timedelta(seconds=REJOIN_WINDOW_S)).isoformat()
+        row = next(iter(run(FIRST_UPLINK, (ts, until, REJOIN_FCNT))), None)
+        if row is None or row[0] in found:
+            continue
+        if next(iter(run("SELECT 1 FROM frames WHERE dev_addr = ? AND ts_utc < ? LIMIT 1", (row[0], ts))), None):
+            continue  # an address in use before the join: somebody else's
+        found[row[0]] = row[1]
+    return sorted((first, addr) for addr, first in found.items())
 
 
 def gateway_uptime(reports: dict[str, list[str]]) -> dict[str, dict]:

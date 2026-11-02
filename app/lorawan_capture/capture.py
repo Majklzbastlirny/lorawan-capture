@@ -18,7 +18,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import store
+from . import explorer, store
 from .chirpstack import messages
 from .config import Config
 from .devices import OwnDevices
@@ -71,7 +71,7 @@ class Capture:
         self._last_error_log = 0.0
         self.gateways: dict[str, dict] = {}
         self.registry = Registry(cfg.data_dir / "gateways.json", cfg.gateway_names)
-        self.own_devices = OwnDevices(cfg.data_dir / "devices.json", cfg.own_devaddrs)
+        self.own_devices = OwnDevices(cfg.data_dir / "devices.json", cfg.own_devaddrs, self.clock)
         self.mqtt: dict = {"connected": False, "since": None, "error": None, "subscriptions": {}}
         self._mqtt_logged: tuple[str, float] = ("", 0.0)
         self.client = None
@@ -84,6 +84,7 @@ class Capture:
         # the same, ready to read without the lock: {"t", "fcnt", "typical"}, replaced whole
         self.own_snapshot: dict[str, dict] = {}
         self._own_seeded: set[str] = set()
+        self._joins: dict[str, datetime] = {}  # followed DevEUI -> its latest join request
 
     # ------------------------------------------------------------------ MQTT
     def start_mqtt(self) -> None:
@@ -189,6 +190,7 @@ class Capture:
                 log.warning("cannot create %s: %s", notes, err)
         with self.lock:
             self._open(self.today())
+            self._catch_up_joins()
         self._sweep_async()
         while True:
             try:
@@ -345,6 +347,13 @@ class Capture:
             sf = bw = None
             cr = ""
         dev = o.get("dev_addr")
+        mtype = o.get("mtype")
+        if mtype == "JoinRequest" and o.get("dev_eui") in self.own_devices.followed:
+            self._joins[o["dev_eui"]] = recv
+        elif (self._joins and dev and dev not in self.own_devices.addrs and o.get("is_downlink") == 0
+              and o.get("major") == 0 and mtype in ("UnconfirmedDataUp", "ConfirmedDataUp")
+              and (o.get("fcnt") or 0) <= store.REJOIN_FCNT and up.crc_status in (None, "CRC_OK")):
+            self._adopt(dev, recv)  # before it is stored, so that the row counts as own
         self.db.execute(store.INSERT_FRAME, (
             recv.isoformat(), _gw_time(up.gw_time), hashlib.sha1(phy).hexdigest(), gateway_id,
             1 if dev in self.own_devices.addrs else 0,
@@ -361,6 +370,79 @@ class Capture:
         if (o.get("is_downlink") == 0 and dev in self.own_devices.addrs and o.get("major") == 0
                 and up.crc_status in (None, "CRC_OK")):
             self._own_heard(dev, o.get("fcnt"), recv)
+
+    def _adopt(self, dev: str, recv: datetime) -> None:
+        """A first uplink of a new session from an unknown address, soon after a followed
+        device's join request: that device's new address (see store.sessions)."""
+        window = timedelta(seconds=store.REJOIN_WINDOW_S)
+        for eui in [eui for eui, at in self._joins.items() if recv - at > window]:
+            del self._joins[eui]
+        if not self._joins:
+            return
+        eui = max(self._joins, key=self._joins.__getitem__)  # the latest join
+        current = self.own_devices.following().get(eui, {}).get("dev_addr")
+        if current and explorer.network(current)["label"] != explorer.network(dev)["label"]:
+            return  # another network's device starting a session just now
+        del self._joins[eui]
+        self.own_devices.adopt(eui, dev, _iso(recv))
+
+    def _catch_up_joins(self) -> None:
+        """At the start: a followed device that joined again while the capture was not running
+        (or before it was followed) is found in the recordings: its newest session, if its
+        current address has not been heard since that session began."""
+        for eui, follow in self.own_devices.following().items():
+            found = self.node_history(eui)
+            if not found or found[-1][1] == follow["dev_addr"]:
+                continue
+            current = follow["dev_addr"]
+            if current is None or (self._last_heard(current) or "") < found[-1][0]:
+                self.own_devices.follow_device(eui, follow["name"], found)
+
+    def _last_heard(self, dev: str, days: int = 31) -> str | None:
+        """When an address was last heard, looking back up to `days` daily files."""
+        first_day = (self.day or self.today()) - timedelta(days=days - 1)
+        sql = "SELECT max(ts_utc) FROM frames WHERE dev_addr = ?"
+        for day, path in store.list_days(self.cfg.data_dir):  # newest first
+            if day < first_day:
+                break
+            try:
+                if day == self.day:
+                    last = self.read(lambda run: next(iter(run(sql, (dev,))), (None,))[0])
+                else:
+                    conn = store.open_readonly(path)
+                    try:
+                        last = conn.execute(sql, (dev,)).fetchone()[0]
+                    finally:
+                        conn.close()
+            except sqlite3.Error:
+                continue
+            if last:
+                return last
+        return None
+
+    def node_history(self, dev_eui: str, days: int = 31) -> list[tuple[str, str]]:
+        """(first uplink, DevAddr) of a device's sessions in the last `days` daily files, oldest
+        first; unreadable days are left out."""
+        found: dict[str, str] = {}
+        first_day = (self.day or self.today()) - timedelta(days=days - 1)
+        for day, path in sorted(store.list_days(self.cfg.data_dir)):
+            if day < first_day:
+                continue
+            try:
+                if day == self.day:
+                    rows = self.read(lambda run: store.sessions(run, dev_eui))
+                else:
+                    conn = store.open_readonly(path)
+                    try:
+                        rows = store.sessions(conn.execute, dev_eui)
+                    finally:
+                        conn.close()
+            except sqlite3.Error as err:
+                log.warning("cannot look for %s in %s: %s", dev_eui, path.name, err)
+                continue
+            for first, addr in rows:
+                found.setdefault(addr, first)
+        return sorted((first, addr) for addr, first in found.items())
 
     def _stats(self, recv: datetime, gateway_id: str, payload: bytes) -> None:
         st = messages.parse_stats(payload, gateway_id)
@@ -424,6 +506,7 @@ class Capture:
             "gateways": {gid: dict(g) for gid, g in list(self.gateways.items())},
             "registry": self.registry.snapshot(),
             "devices": self.own_devices.snapshot(),
+            "following": self.own_devices.following(),
         }
 
     def own(self) -> frozenset[str]:

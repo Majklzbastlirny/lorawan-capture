@@ -82,8 +82,18 @@ The list lives in `data/devices.json`. `OWN_DEVADDRS` in `.env` only adds addres
 is taken over once, so a device removed in the UI stays removed after a restart, and an address
 added to `.env` later is still picked up.
 
-- A device is known by its DevAddr, the only identity the gateways see. An OTAA device gets a
-  new DevAddr each time it joins; add the new one then.
+- The gateways only see a device's DevAddr, and an OTAA device gets a new one every time it
+  joins (a reset, a battery change, or when it decides it lost the network). So **add a device by
+  its DevEUI** (*Add device* takes a DevEUI or a DevAddr), or give an address its DevEUI with
+  *Rename*. Such a device is followed:
+  - its addresses are looked up in the last 31 days of recordings: the DevEUI travels in clear
+    in the join request, and the address the network answers with (encrypted) is the one whose
+    first uplink follows within 2 minutes with a new session's frame counter (0-3);
+  - when it joins again, the same happens live: the new address is taken over with the same
+    name, from its first uplink on, and the old one gets an *until* (its history still counts
+    as yours, and it is no longer checked for being overdue);
+  - a join that happened while the capture was not running is found at the next start.
+  ChirpStack shows the DevEUI on the device's page.
 - Rows recorded from now on get `is_own = 1` for it. Rows already in the files keep the value
   they were recorded with, but the UI's numbers (Overview and Devices) always use the current
   list, for past days too.
