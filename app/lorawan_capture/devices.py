@@ -72,6 +72,8 @@ class OwnDevices:
         self.follow: dict[str, dict] = {
             eui: {"name": entry.get("name"), "added": entry.get("added")}
             for eui, entry in follow.items() if DEV_EUI.match(eui) and isinstance(entry, dict)}
+        for eui in self.follow:
+            self._settle(eui)
         self.imported = {addr for addr in loaded.get("imported") or [] if isinstance(addr, str)}
         new = sorted(set(seed) - self.imported)
         for addr in new:
@@ -124,6 +126,8 @@ class OwnDevices:
             added = entry is None
             if added:
                 entry = self.devices[addr] = {"name": None, "added": self._now()}
+            if eui and eui != entry.get("dev_eui") and name is None:  # linked without a name: it takes the device's
+                name = (self.follow.get(eui) or {}).get("name")
             unlinked = entry.get("dev_eui") if eui == "" else None
             if eui == "":
                 entry.pop("dev_eui", None)
@@ -139,6 +143,8 @@ class OwnDevices:
                     if other.get("dev_eui") == linked:
                         other["name"] = name
             entry["name"] = name
+            if linked:
+                self._settle(linked)
             self._publish()
             result = {"dev_addr": addr, **entry}
         self.save()
@@ -171,6 +177,7 @@ class OwnDevices:
             for addr, device in self.devices.items():  # earlier links of this device keep their place
                 if device.get("dev_eui") == eui:
                     device["name"] = name
+            self._settle(eui)
             self._publish()
             current = self._current(eui)
         self.save()
@@ -192,6 +199,14 @@ class OwnDevices:
         self.save()
         log.info("own device %s (%s) joined again: now %s", name or dev_eui, dev_eui, addr)
         return name
+
+    def _settle(self, eui: str) -> None:
+        """One current address per followed device: in the order they came into use, each one
+        that has no `until` yet was left behind when the next one started (lock held)."""
+        mine = sorted((entry.get("added") or "", addr) for addr, entry in self.devices.items()
+                      if entry.get("dev_eui") == eui)
+        for (_, addr), (later, _) in zip(mine, mine[1:]):
+            self.devices[addr].setdefault("until", later)
 
     def _now(self) -> str:
         return self.clock().astimezone(timezone.utc).isoformat(timespec="seconds")

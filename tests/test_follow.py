@@ -109,10 +109,10 @@ def test_a_join_while_the_capture_was_down_is_caught_up(make_capture):
 
 
 def test_own_device_list(tmp_path):
-    devices = OwnDevices(tmp_path / "devices.json")
+    devices = OwnDevices(tmp_path / "devices.json", clock=Clock(START))
     devices.follow_device(EUI, "Waiting", [])  # no address yet
     devices.put(OLD, "Node", "70:B3:D5:7E:D0:00:00:02")
-    devices.adopt("70b3d57ed0000002", NEW, "2026-10-31T13:59:23+00:00")
+    devices.adopt("70b3d57ed0000002", NEW, (START + timedelta(days=1)).isoformat())
     devices.put(NEW, "Renamed")  # one name for every address of the device
     assert {a: e["name"] for a, e in devices.snapshot().items()} == {OLD: "Renamed", NEW: "Renamed"}
     assert set(devices.following()) == {EUI, "70b3d57ed0000002"}  # the waiting one is still followed
@@ -121,3 +121,29 @@ def test_own_device_list(tmp_path):
     assert devices.remove("70b3d57ed0000002") and devices.snapshot().keys() == {"00e5f6a7"}
     assert devices.remove(EUI) and devices.followed == frozenset()
     assert not devices.remove(EUI)
+
+
+def test_linking_an_old_address_keeps_the_name_and_one_current_address(tmp_path):
+    clock = Clock(START - timedelta(days=30))
+    devices = OwnDevices(tmp_path / "devices.json", clock=clock)
+    devices.put(OLD, None)  # an address from before, without a name
+    clock.now = START
+    sessions = [("2026-10-24T07:25:41+00:00", "00c3d4e5"), ("2026-10-31T13:59:23+00:00", NEW)]
+    devices.follow_device(EUI, "Uart_Node", sessions)
+    devices.put(OLD, "", EUI)  # Rename with the DevEUI filled in and the name left empty
+    snapshot = devices.snapshot()
+    assert {addr: entry["name"] for addr, entry in snapshot.items()} == dict.fromkeys((OLD, "00c3d4e5", NEW), "Uart_Node")
+    assert snapshot[OLD]["until"] == "2026-10-24T07:25:41+00:00"  # left behind when the first session found began
+    assert list(devices.current()) == [NEW]
+
+
+def test_a_list_saved_before_the_fix_is_settled_when_loaded(tmp_path):
+    import json
+    path = tmp_path / "devices.json"
+    path.write_text(json.dumps({"devices": {
+        OLD: {"name": None, "added": "2026-10-03T21:08:49+00:00", "dev_eui": EUI},
+        NEW: {"name": None, "added": "2026-10-31T13:59:23+00:00", "dev_eui": EUI}},
+        "follow": {EUI: {"name": None, "added": "2026-11-02T20:16:25+00:00"}}, "imported": [OLD]}))
+    devices = OwnDevices(path)
+    assert list(devices.current()) == [NEW] and devices.snapshot()[OLD]["until"] == "2026-10-31T13:59:23+00:00"
+
